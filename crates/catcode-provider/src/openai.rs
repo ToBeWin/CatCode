@@ -306,6 +306,32 @@ impl Provider for OpenAIProvider {
 
     fn supported_models(&self) -> Vec<ModelInfo> {
         vec![
+            // GPT-4.1 family (latest)
+            ModelInfo {
+                id: "gpt-4.1".to_string(),
+                display_name: "GPT-4.1".to_string(),
+                input_price_per_mtok: 2.00,
+                output_price_per_mtok: 8.00,
+                context_window: 1_047_576,
+                tier: ModelTier::Powerful,
+            },
+            ModelInfo {
+                id: "gpt-4.1-mini".to_string(),
+                display_name: "GPT-4.1 Mini".to_string(),
+                input_price_per_mtok: 0.40,
+                output_price_per_mtok: 1.60,
+                context_window: 1_047_576,
+                tier: ModelTier::Balanced,
+            },
+            ModelInfo {
+                id: "gpt-4.1-nano".to_string(),
+                display_name: "GPT-4.1 Nano".to_string(),
+                input_price_per_mtok: 0.10,
+                output_price_per_mtok: 0.40,
+                context_window: 1_047_576,
+                tier: ModelTier::Fast,
+            },
+            // GPT-4o family
             ModelInfo {
                 id: "gpt-4o".to_string(),
                 display_name: "GPT-4o".to_string(),
@@ -322,6 +348,7 @@ impl Provider for OpenAIProvider {
                 context_window: 128_000,
                 tier: ModelTier::Fast,
             },
+            // o3 family (reasoning)
             ModelInfo {
                 id: "o3".to_string(),
                 display_name: "o3".to_string(),
@@ -333,6 +360,14 @@ impl Provider for OpenAIProvider {
             ModelInfo {
                 id: "o3-mini".to_string(),
                 display_name: "o3 Mini".to_string(),
+                input_price_per_mtok: 1.10,
+                output_price_per_mtok: 4.40,
+                context_window: 200_000,
+                tier: ModelTier::Balanced,
+            },
+            ModelInfo {
+                id: "o4-mini".to_string(),
+                display_name: "o4 Mini".to_string(),
                 input_price_per_mtok: 1.10,
                 output_price_per_mtok: 4.40,
                 context_window: 200_000,
@@ -795,7 +830,7 @@ mod tests {
         let provider = create_test_provider();
         assert_eq!(provider.id(), "openai");
         assert_eq!(provider.display_name(), "OpenAI");
-        assert_eq!(provider.supported_models().len(), 4);
+        assert_eq!(provider.supported_models().len(), 8);
     }
 
     #[test]

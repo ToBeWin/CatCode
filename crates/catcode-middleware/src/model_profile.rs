@@ -167,10 +167,14 @@ impl ProfileRegistry {
         self.register(ModelProfile::reasoning("deepseek-reasoner"));
 
         // OpenAI
+        self.register(ModelProfile::strong("gpt-4.1"));
+        self.register(ModelProfile::balanced("gpt-4.1-mini"));
+        self.register(ModelProfile::fast("gpt-4.1-nano"));
         self.register(ModelProfile::strong("gpt-4o"));
+        self.register(ModelProfile::fast("gpt-4o-mini"));
         self.register(ModelProfile::reasoning("o3"));
         self.register(ModelProfile::reasoning("o3-mini"));
-        self.register(ModelProfile::fast("gpt-4o-mini"));
+        self.register(ModelProfile::reasoning("o4-mini"));
 
         // Ollama local models
         self.register(ModelProfile::fast("llama3.1"));
@@ -182,6 +186,21 @@ impl ProfileRegistry {
         self.register(ModelProfile::strong("qwen3-coder"));
         self.register(ModelProfile::balanced("qwen3-moe"));
         self.register(ModelProfile::balanced("qwen2.5"));
+
+        // Google Gemini
+        self.register(ModelProfile::strong("gemini-2.5-pro"));
+        self.register(ModelProfile::fast("gemini-2.5-flash"));
+        self.register(ModelProfile::fast("gemini-2.0-flash"));
+
+        // MiniMax
+        self.register(ModelProfile::strong("MiniMax-M1"));
+        self.register(ModelProfile::balanced("MiniMax-Text-01"));
+
+        // GLM (Zhipu)
+        self.register(ModelProfile::strong("glm-4-plus"));
+        self.register(ModelProfile::fast("glm-4-flash"));
+        self.register(ModelProfile::balanced("glm-4-long"));
+        self.register(ModelProfile::balanced("glm-z1-air"));
     }
 }
 

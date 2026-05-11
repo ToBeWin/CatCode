@@ -1,5 +1,8 @@
 pub mod anthropic;
 pub mod deepseek;
+pub mod glm;
+pub mod google;
+pub mod minimax;
 pub mod mock;
 pub mod ollama;
 pub mod openai;
