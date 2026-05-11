@@ -169,12 +169,19 @@ impl ProfileRegistry {
         // OpenAI
         self.register(ModelProfile::strong("gpt-4o"));
         self.register(ModelProfile::reasoning("o3"));
+        self.register(ModelProfile::reasoning("o3-mini"));
         self.register(ModelProfile::fast("gpt-4o-mini"));
 
         // Ollama local models
         self.register(ModelProfile::fast("llama3.1"));
         self.register(ModelProfile::fast("qwen2.5"));
         self.register(ModelProfile::fast("codellama"));
+
+        // Qwen (DashScope)
+        self.register(ModelProfile::strong("qwen3"));
+        self.register(ModelProfile::strong("qwen3-coder"));
+        self.register(ModelProfile::balanced("qwen3-moe"));
+        self.register(ModelProfile::balanced("qwen2.5"));
     }
 }
 
