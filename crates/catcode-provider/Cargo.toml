@@ -1,0 +1,7 @@
+[package]
+name = "catcode-provider"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+catcode-core = { path = "../catcode-core" }
