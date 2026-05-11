@@ -216,26 +216,123 @@ impl App {
                 } else {
                     let names: Vec<String> = sessions
                         .iter()
-                        .map(|s| {
+                        .enumerate()
+                        .map(|(i, s)| {
                             let state = match &s.state {
                                 SessionState::Running => "●",
                                 SessionState::Paused => "◐",
                                 SessionState::Completed => "✓",
                                 SessionState::Failed(_) => "✗",
                             };
-                            format!("{} {} ({})", state, s.name, &s.id[..8])
+                            format!("{}: {}{} ({})", i + 1, state, s.name, &s.id[..8])
                         })
                         .collect();
                     self.status = names.join(" | ");
                 }
             }
+            "switch" | "s" => {
+                if let Some(num_str) = parts.get(1) {
+                    if let Ok(num) = num_str.parse::<usize>() {
+                        self.switch_to_session_by_index(num);
+                    } else {
+                        // Try to switch by name
+                        self.switch_to_session_by_name(num_str);
+                    }
+                } else {
+                    self.status = "Usage: /switch <number|name>".to_string();
+                }
+            }
+            "close" => {
+                if let Some(id) = self.active_session.clone() {
+                    let _ = self
+                        .sessions
+                        .update_state(&id, SessionState::Completed);
+                    self.active_session = None;
+                    self.messages.clear();
+                    self.status = "Session closed".to_string();
+                } else {
+                    self.status = "No active session".to_string();
+                }
+            }
+            "clear" | "cls" => {
+                self.messages.clear();
+                self.scroll_offset = 0;
+                self.status = "Messages cleared".to_string();
+            }
+            "usage" => {
+                self.status = format!(
+                    "Input: {} | Output: {} | Cache: {} | Cost: ${:.4}",
+                    self.token_display.input_tokens,
+                    self.token_display.output_tokens,
+                    self.token_display.cache_tokens,
+                    self.token_display.cost_usd,
+                );
+            }
+            "model" | "m" => {
+                if let Some(model) = parts.get(1) {
+                    if let Some(session) = self.active_session_mut() {
+                        session.model_id = model.to_string();
+                        self.status = format!("Model set to: {}", model);
+                    } else {
+                        self.status = "No active session".to_string();
+                    }
+                } else {
+                    let current = self
+                        .active_session()
+                        .map(|s| s.model_id.as_str())
+                        .unwrap_or("none");
+                    self.status = format!("Current model: {} | Usage: /model <name>", current);
+                }
+            }
             "help" | "h" => {
-                self.status = "/new <name> | /sessions | /quit | /help".to_string();
+                self.status = "/new | /sessions | /switch <n> | /close | /clear | /model | /usage | /quit".to_string();
             }
             _ => {
-                self.status = format!("Unknown command: {}", parts[0]);
+                self.status = format!("Unknown command: /{}", parts[0]);
             }
         }
+    }
+
+    /// Switch to a session by its list index (1-based).
+    pub fn switch_to_session_by_index(&mut self, index: usize) {
+        let sessions = self.sessions.list();
+        if index == 0 || index > sessions.len() {
+            self.status = format!(
+                "Invalid index: {} (valid: 1-{})",
+                index,
+                sessions.len()
+            );
+            return;
+        }
+        let session = &sessions[index - 1];
+        self.active_session = Some(session.id.clone());
+        self.messages.clear();
+        self.scroll_offset = 0;
+        self.status = format!("Switched to: {}", session.name);
+    }
+
+    /// Switch to a session by name substring match.
+    fn switch_to_session_by_name(&mut self, name: &str) {
+        let sessions = self.sessions.list();
+        let name_lower = name.to_lowercase();
+        if let Some(session) = sessions
+            .iter()
+            .find(|s| s.name.to_lowercase().contains(&name_lower))
+        {
+            self.active_session = Some(session.id.clone());
+            self.messages.clear();
+            self.scroll_offset = 0;
+            self.status = format!("Switched to: {}", session.name);
+        } else {
+            self.status = format!("No session matching '{}'", name);
+        }
+    }
+
+    /// Get the active session mutably.
+    pub fn active_session_mut(&mut self) -> Option<&mut Session> {
+        self.active_session
+            .as_ref()
+            .and_then(|id| self.sessions.get_mut(id))
     }
 
     /// Quit the application.
@@ -360,5 +457,148 @@ mod tests {
         assert_eq!(app.scroll_offset, 5);
         app.scroll_up(10);
         assert_eq!(app.scroll_offset, 0);
+    }
+
+    #[test]
+    fn test_command_switch_by_index() {
+        let mut app = make_app();
+        app.create_session("first");
+        app.create_session("second");
+        app.create_session("third");
+
+        // List to get the actual order
+        let sessions = app.sessions.list();
+        let names: Vec<&str> = sessions.iter().map(|s| s.name.as_str()).collect();
+
+        // Switch to session 1 (whatever it is in HashMap order)
+        app.enter_command_mode();
+        app.command_input = "switch 1".to_string();
+        app.submit_input();
+        let session = app.active_session().unwrap();
+        assert_eq!(session.name, names[0]);
+
+        // Switch to session 3
+        app.enter_command_mode();
+        app.command_input = "switch 3".to_string();
+        app.submit_input();
+        let session = app.active_session().unwrap();
+        assert_eq!(session.name, names[2]);
+    }
+
+    #[test]
+    fn test_command_switch_by_name() {
+        let mut app = make_app();
+        app.create_session("auth-fix");
+        app.create_session("refactor");
+
+        app.enter_command_mode();
+        app.command_input = "switch auth".to_string();
+        app.submit_input();
+        let session = app.active_session().unwrap();
+        assert_eq!(session.name, "auth-fix");
+    }
+
+    #[test]
+    fn test_command_switch_invalid_index() {
+        let mut app = make_app();
+        app.create_session("test");
+        app.enter_command_mode();
+        app.command_input = "switch 5".to_string();
+        app.submit_input();
+        assert!(app.status.contains("Invalid index"));
+    }
+
+    #[test]
+    fn test_command_close() {
+        let mut app = make_app();
+        app.create_session("test");
+        assert!(app.active_session.is_some());
+
+        app.enter_command_mode();
+        app.command_input = "close".to_string();
+        app.submit_input();
+        assert!(app.active_session.is_none());
+        assert!(app.messages.is_empty());
+    }
+
+    #[test]
+    fn test_command_clear() {
+        let mut app = make_app();
+        app.add_message(MessageRole::User, "test");
+        assert_eq!(app.messages.len(), 1);
+
+        app.enter_command_mode();
+        app.command_input = "clear".to_string();
+        app.submit_input();
+        assert!(app.messages.is_empty());
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    #[test]
+    fn test_command_model() {
+        let mut app = make_app();
+        app.create_session("test");
+
+        // Set model
+        app.enter_command_mode();
+        app.command_input = "model gpt-4o".to_string();
+        app.submit_input();
+        let session = app.active_session().unwrap();
+        assert_eq!(session.model_id, "gpt-4o");
+
+        // View model
+        app.enter_command_mode();
+        app.command_input = "model".to_string();
+        app.submit_input();
+        assert!(app.status.contains("gpt-4o"));
+    }
+
+    #[test]
+    fn test_command_usage() {
+        let mut app = make_app();
+        app.token_display.input_tokens = 1000;
+        app.token_display.output_tokens = 500;
+        app.token_display.cache_tokens = 200;
+        app.token_display.cost_usd = 0.05;
+
+        app.enter_command_mode();
+        app.command_input = "usage".to_string();
+        app.submit_input();
+        assert!(app.status.contains("1000"));
+        assert!(app.status.contains("0.0500"));
+    }
+
+    #[test]
+    fn test_switch_to_session_by_index() {
+        let mut app = make_app();
+        app.create_session("a");
+        app.create_session("b");
+
+        // Get actual order from HashMap
+        let sessions = app.sessions.list();
+        let first_name = sessions[0].name.clone();
+        let second_name = sessions[1].name.clone();
+
+        app.switch_to_session_by_index(1);
+        assert_eq!(app.active_session().unwrap().name, first_name);
+
+        app.switch_to_session_by_index(2);
+        assert_eq!(app.active_session().unwrap().name, second_name);
+
+        // Out of range
+        app.switch_to_session_by_index(0);
+        assert!(app.status.contains("Invalid"));
+
+        app.switch_to_session_by_index(10);
+        assert!(app.status.contains("Invalid"));
+    }
+
+    #[test]
+    fn test_active_session_mut() {
+        let mut app = make_app();
+        app.create_session("test");
+        let session = app.active_session_mut().unwrap();
+        session.model_id = "new-model".to_string();
+        assert_eq!(app.active_session().unwrap().model_id, "new-model");
     }
 }

@@ -118,8 +118,8 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) {
         KeyCode::Backspace => {
             app.handle_backspace();
         }
-        // Tab — switch to command mode
-        KeyCode::Tab => {
+        // Tab — switch to command mode (only without Ctrl)
+        KeyCode::Tab if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.enter_command_mode();
         }
         // Ctrl+N — new session
@@ -137,6 +137,58 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) {
                 app.status = "Session closed".to_string();
             }
         }
+        // Ctrl+K — clear messages
+        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.messages.clear();
+            app.scroll_offset = 0;
+            app.status = "Messages cleared".to_string();
+        }
+        // Ctrl+L — clear input
+        KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.input.clear();
+            app.input_cursor = 0;
+        }
+        // Ctrl+1-9 — switch to session by number
+        KeyCode::Char(c @ '1'..='9') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let index = c as usize - '0' as usize;
+            app.switch_to_session_by_index(index);
+        }
+        // Ctrl+Right — cycle to next session
+        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let sessions = app.sessions.list();
+            if sessions.len() > 1 {
+                let current_idx = app
+                    .active_session
+                    .as_ref()
+                    .and_then(|id| sessions.iter().position(|s| &s.id == id))
+                    .unwrap_or(0);
+                let next_idx = (current_idx + 1) % sessions.len();
+                app.active_session = Some(sessions[next_idx].id.clone());
+                app.messages.clear();
+                app.scroll_offset = 0;
+                app.status = format!("Switched to: {}", sessions[next_idx].name);
+            }
+        }
+        // Ctrl+Left — cycle to previous session
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let sessions = app.sessions.list();
+            if sessions.len() > 1 {
+                let current_idx = app
+                    .active_session
+                    .as_ref()
+                    .and_then(|id| sessions.iter().position(|s| &s.id == id))
+                    .unwrap_or(0);
+                let prev_idx = if current_idx == 0 {
+                    sessions.len() - 1
+                } else {
+                    current_idx - 1
+                };
+                app.active_session = Some(sessions[prev_idx].id.clone());
+                app.messages.clear();
+                app.scroll_offset = 0;
+                app.status = format!("Switched to: {}", sessions[prev_idx].name);
+            }
+        }
         // Page Up — scroll up
         KeyCode::PageUp => {
             app.scroll_up(10);
@@ -151,6 +203,14 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Down => {
             app.scroll_down(1);
+        }
+        // Home — scroll to top
+        KeyCode::Home => {
+            app.scroll_offset = 0;
+        }
+        // End — scroll to bottom
+        KeyCode::End => {
+            app.scroll_to_bottom();
         }
         // / — enter command mode
         KeyCode::Char('/') => {
@@ -262,5 +322,71 @@ mod tests {
             KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
         );
         assert_eq!(app.scroll_offset, 20); // scrolled back down
+    }
+
+    #[test]
+    fn test_handle_key_ctrl_k_clear_messages() {
+        let mut app = App::new(PathBuf::from("/tmp"));
+        app.add_message(app::MessageRole::User, "test");
+        assert_eq!(app.messages.len(), 1);
+
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+        );
+        assert!(app.messages.is_empty());
+    }
+
+    #[test]
+    fn test_handle_key_ctrl_l_clear_input() {
+        let mut app = App::new(PathBuf::from("/tmp"));
+        app.input = "hello world".to_string();
+        app.input_cursor = 11;
+
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
+        );
+        assert!(app.input.is_empty());
+        assert_eq!(app.input_cursor, 0);
+    }
+
+    #[test]
+    fn test_handle_key_ctrl_number_switch_session() {
+        let mut app = App::new(PathBuf::from("/tmp"));
+        app.create_session("first");
+        app.create_session("second");
+        app.create_session("third");
+
+        // Get actual order from HashMap
+        let sessions = app.sessions.list();
+        let first_name = sessions[0].name.clone();
+        let third_name = sessions[2].name.clone();
+
+        // Ctrl+1 -> first session
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('1'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(app.active_session().unwrap().name, first_name);
+
+        // Ctrl+3 -> third session
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('3'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(app.active_session().unwrap().name, third_name);
+    }
+
+    #[test]
+    fn test_handle_key_home_end_scroll() {
+        let mut app = App::new(PathBuf::from("/tmp"));
+        app.scroll_offset = 50;
+
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+        assert_eq!(app.scroll_offset, 0);
+
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+        assert_eq!(app.scroll_offset, usize::MAX);
     }
 }

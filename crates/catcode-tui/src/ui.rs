@@ -4,8 +4,20 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
+
+/// All available commands for the command palette.
+const COMMANDS: &[(&str, &str)] = &[
+    ("new <name>", "Create a new session"),
+    ("sessions", "List all sessions"),
+    ("switch <n|name>", "Switch to session"),
+    ("close", "Close current session"),
+    ("clear", "Clear messages"),
+    ("model <name>", "Set/view model"),
+    ("usage", "Show token usage"),
+    ("quit", "Exit CatCode"),
+];
 
 /// Render the main UI.
 pub fn render(f: &mut Frame, app: &App) {
@@ -23,6 +35,76 @@ pub fn render(f: &mut Frame, app: &App) {
     render_main_area(f, app, chunks[1]);
     render_input(f, app, chunks[2]);
     render_status_bar(f, app, chunks[3]);
+
+    // Command suggestions overlay (when in command mode)
+    if app.input_mode == InputMode::Command {
+        render_command_suggestions(f, app);
+    }
+}
+
+/// Render command suggestions overlay when in command mode.
+fn render_command_suggestions(f: &mut Frame, app: &App) {
+    let input = app.command_input.to_lowercase();
+    let suggestions: Vec<(&str, &str)> = COMMANDS
+        .iter()
+        .filter(|(cmd, _)| {
+            let cmd_name = cmd.split_whitespace().next().unwrap_or(cmd);
+            input.is_empty() || cmd_name.starts_with(&input)
+        })
+        .copied()
+        .collect();
+
+    if suggestions.is_empty() {
+        return;
+    }
+
+    // Calculate popup size
+    let popup_height = (suggestions.len() as u16 + 2).min(12); // +2 for borders
+    let popup_width = 40u16.min(f.area().width.saturating_sub(4));
+
+    // Position: centered horizontally, above input area
+    let input_area_y = f.area().height.saturating_sub(4); // input starts here
+    let popup_y = input_area_y.saturating_sub(popup_height + 1);
+    let popup_x = (f.area().width.saturating_sub(popup_width)) / 2;
+
+    let area = Rect {
+        x: popup_x,
+        y: popup_y,
+        width: popup_width,
+        height: popup_height,
+    };
+
+    // Clear the area behind the popup
+    f.render_widget(Clear, area);
+
+    let items: Vec<ListItem> = suggestions
+        .iter()
+        .map(|(cmd, desc)| {
+            let cmd_name = cmd.split_whitespace().next().unwrap_or(cmd);
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("/{:<14}", cmd_name),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" {}", desc),
+                    Style::default().fg(Color::Gray),
+                ),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items).block(
+        Block::default()
+            .title(" Commands ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow))
+            .style(Style::default().bg(Color::Black)),
+    );
+
+    f.render_widget(list, area);
 }
 
 /// Render the top bar with session name, model, and token info.
@@ -78,19 +160,21 @@ fn render_main_area(f: &mut Frame, app: &App, area: Rect) {
 /// Render the sessions list panel.
 fn render_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
     let sessions = app.sessions.list();
+    let count = sessions.len();
 
     let items: Vec<ListItem> = sessions
         .iter()
-        .map(|s| {
+        .enumerate()
+        .map(|(i, s)| {
             let indicator = match &s.state {
-                SessionState::Running => Span::styled("● ", Style::default().fg(Color::Green)),
-                SessionState::Paused => Span::styled("◐ ", Style::default().fg(Color::Yellow)),
-                SessionState::Completed => Span::styled("✓ ", Style::default().fg(Color::Blue)),
-                SessionState::Failed(_) => Span::styled("✗ ", Style::default().fg(Color::Red)),
+                SessionState::Running => Span::styled("●", Style::default().fg(Color::Green)),
+                SessionState::Paused => Span::styled("◐", Style::default().fg(Color::Yellow)),
+                SessionState::Completed => Span::styled("✓", Style::default().fg(Color::Blue)),
+                SessionState::Failed(_) => Span::styled("✗", Style::default().fg(Color::Red)),
             };
 
             let is_active = app.active_session.as_ref() == Some(&s.id);
-            let style = if is_active {
+            let name_style = if is_active {
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD)
@@ -98,13 +182,26 @@ fn render_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::Gray)
             };
 
-            ListItem::new(Line::from(vec![indicator, Span::styled(&s.name, style)]))
+            let num_style = Style::default().fg(Color::DarkGray);
+            let num = if i < 9 {
+                format!("{} ", i + 1)
+            } else {
+                "  ".to_string()
+            };
+
+            ListItem::new(Line::from(vec![
+                Span::styled(num, num_style),
+                indicator,
+                Span::raw(" "),
+                Span::styled(&s.name, name_style),
+            ]))
         })
         .collect();
 
+    let title = format!(" Sessions ({}) ", count);
     let list = List::new(items).block(
         Block::default()
-            .title(" Sessions ")
+            .title(title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::DarkGray)),
     );
@@ -220,15 +317,22 @@ fn render_input(f: &mut Frame, app: &App, area: Rect) {
 
 /// Render the status bar at the bottom.
 fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
+    let session_count = app.sessions.total_count();
     let help = match app.input_mode {
-        InputMode::Normal => " Enter:send | /:command | Ctrl+N:new | Ctrl+Q:quit",
-        InputMode::Command => " Enter:execute | Esc:cancel",
+        InputMode::Normal => {
+            if session_count > 1 {
+                " Enter:send | /:cmd | Tab:cmd | Ctrl+1-9:switch | Ctrl+N:new | Ctrl+K:clear"
+            } else {
+                " Enter:send | /:cmd | Tab:cmd | Ctrl+N:new | Ctrl+K:clear"
+            }
+        }
+        InputMode::Command => " Enter:exec | Esc:cancel | Tab:autocomplete",
     };
 
     let status_text = if app.status.is_empty() {
         help.to_string()
     } else {
-        format!("{} | {}", app.status, help)
+        format!("{} │ {}", app.status, help)
     };
 
     let paragraph =
@@ -254,5 +358,48 @@ mod tests {
                 render(f, &app);
             })
             .unwrap();
+    }
+
+    #[test]
+    fn test_render_with_sessions() {
+        let mut app = App::new(PathBuf::from("/tmp"));
+        app.create_session("test-1");
+        app.create_session("test-2");
+        app.add_message(MessageRole::User, "hello");
+        app.add_message(MessageRole::Assistant, "hi there");
+
+        let backend = ratatui::backend::TestBackend::new(120, 40);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                render(f, &app);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_render_in_command_mode() {
+        let mut app = App::new(PathBuf::from("/tmp"));
+        app.create_session("test");
+        app.enter_command_mode();
+        app.command_input = "he".to_string(); // should match "help"
+
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                render(f, &app);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_command_suggestions_filtering() {
+        // Verify the command list is non-empty
+        assert!(!COMMANDS.is_empty());
+        assert!(COMMANDS.iter().any(|(cmd, _)| cmd.starts_with("new")));
+        assert!(COMMANDS.iter().any(|(cmd, _)| cmd.starts_with("quit")));
     }
 }
