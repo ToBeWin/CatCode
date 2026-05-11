@@ -77,7 +77,15 @@ type ToolCallHandler<'a> = Box<
 >;
 
 pub struct ToolCallNext<'a> {
-    inner: ToolCallHandler<'a>,
+    inner: std::sync::Arc<ToolCallHandler<'a>>,
+}
+
+impl<'a> Clone for ToolCallNext<'a> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: std::sync::Arc::clone(&self.inner),
+        }
+    }
 }
 
 impl<'a> ToolCallNext<'a> {
@@ -87,7 +95,7 @@ impl<'a> ToolCallNext<'a> {
         Fut: std::future::Future<Output = ToolResult> + Send + 'a,
     {
         Self {
-            inner: Box::new(move |call| Box::pin(f(call))),
+            inner: std::sync::Arc::new(Box::new(move |call| Box::pin(f(call)))),
         }
     }
 
