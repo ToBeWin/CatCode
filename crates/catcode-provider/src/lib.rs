@@ -3,6 +3,7 @@ pub mod deepseek;
 pub mod mock;
 pub mod ollama;
 pub mod openai;
+pub mod qwen;
 
 pub use catcode_core::provider::*;
 
