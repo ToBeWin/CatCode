@@ -67,10 +67,10 @@ cargo clippy --workspace
 | Provider | Models | Status |
 |----------|--------|--------|
 | Anthropic | Claude Sonnet 4, Claude Opus 4, Claude Haiku 4.5 | Implemented |
+| OpenAI | gpt-4o, gpt-4o-mini, o3, o3-mini | Implemented |
 | DeepSeek | deepseek-chat, deepseek-reasoner | Implemented |
+| Qwen (DashScope) | qwen3, qwen3-coder, qwen3-moe, qwen2.5 | Implemented |
 | Ollama | llama3.1, qwen2.5, codellama (local) | Implemented |
-| OpenAI | gpt-4o, o3 | Planned |
-| Qwen (DashScope) | qwen3 | Planned |
 | Google | gemini-2.5-pro | Planned |
 
 ## API Endpoints
