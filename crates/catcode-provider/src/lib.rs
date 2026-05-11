@@ -2,6 +2,7 @@ pub mod anthropic;
 pub mod deepseek;
 pub mod mock;
 pub mod ollama;
+pub mod openai;
 
 pub use catcode_core::provider::*;
 
