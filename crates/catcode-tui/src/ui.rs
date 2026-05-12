@@ -1,4 +1,4 @@
-use crate::app::{App, InputMode, MessageRole};
+use crate::app::{AgentMode, App, CatState, GoalStatus, InputMode, MessageRole};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -16,6 +16,15 @@ const COMMANDS: &[(&str, &str)] = &[
     ("clear", "Clear messages"),
     ("model <name>", "Set/view model"),
     ("usage", "Show token usage"),
+    ("plan", "Enter plan mode (no tools)"),
+    ("act", "Enter act mode (default)"),
+    ("auto", "Plan first, then execute"),
+    ("goal <objective>", "Create autonomous goal"),
+    ("goal status", "Show goal status"),
+    ("goal pause", "Pause active goal"),
+    ("goal resume", "Resume paused goal"),
+    ("goal clear", "Clear current goal"),
+    ("cat on|off", "Toggle cat mascot"),
     ("quit", "Exit CatCode"),
 ];
 
@@ -127,17 +136,62 @@ fn render_top_bar(f: &mut Frame, app: &App, area: Rect) {
         app.token_display.cost_usd,
     );
 
-    let line = Line::from(vec![
+    let mode_label = app.agent_mode.label();
+    let mode_color = match app.agent_mode {
+        AgentMode::Plan => Color::Magenta,
+        AgentMode::Act => Color::Green,
+        AgentMode::Auto => Color::Yellow,
+    };
+
+    let mut spans = vec![
         Span::styled(
             " CatCode ".to_string(),
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(format!(" [{}]", session_name)),
-        Span::styled(format!(" [{}]", model), Style::default().fg(Color::Yellow)),
-        Span::styled(format!(" {}", tokens), Style::default().fg(Color::Green)),
-    ]);
+        Span::styled(
+            format!(" [{}]", mode_label),
+            Style::default()
+                .fg(mode_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+
+    // Show goal indicator if there's an active goal
+    if let Some(goal) = &app.goal {
+        let (goal_icon, goal_color) = match goal.status {
+            GoalStatus::Active => ("GOAL", Color::Green),
+            GoalStatus::Paused => ("GOAL⏸", Color::Yellow),
+            GoalStatus::BudgetLimited => ("GOAL$", Color::Red),
+            GoalStatus::Complete => ("GOAL✓", Color::Blue),
+        };
+        spans.push(Span::styled(
+            format!(" [{}]", goal_icon),
+            Style::default().fg(goal_color).add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    spans.push(Span::raw(format!(" [{}]", session_name)));
+    spans.push(Span::styled(format!(" [{}]", model), Style::default().fg(Color::Yellow)));
+    spans.push(Span::styled(format!(" {}", tokens), Style::default().fg(Color::Green)));
+
+    // Cat mascot
+    if app.cat_enabled {
+        let cat_color = match app.cat_state {
+            CatState::Idle => Color::DarkGray,
+            CatState::Thinking => Color::Yellow,
+            CatState::Executing => Color::Green,
+            CatState::Error => Color::Red,
+            CatState::Done => Color::Cyan,
+        };
+        spans.push(Span::styled(
+            format!(" {}", app.cat_art()),
+            Style::default().fg(cat_color),
+        ));
+    }
+
+    let line = Line::from(spans);
 
     let paragraph = Paragraph::new(line).style(Style::default().bg(Color::DarkGray));
     f.render_widget(paragraph, area);
@@ -320,17 +374,22 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let session_count = app.sessions.total_count();
     let help = match app.input_mode {
         InputMode::Normal => {
+            let mode_hint = match app.agent_mode {
+                AgentMode::Plan => "Ctrl+P:switch to act",
+                AgentMode::Act => "Ctrl+P:plan mode",
+                AgentMode::Auto => "Ctrl+P:plan mode",
+            };
             if session_count > 1 {
-                " Enter:send | /:cmd | Tab:cmd | Ctrl+1-9:switch | Ctrl+N:new | Ctrl+K:clear"
+                format!(" Enter:send | /:cmd | {} | Ctrl+1-9:switch | Ctrl+N:new", mode_hint)
             } else {
-                " Enter:send | /:cmd | Tab:cmd | Ctrl+N:new | Ctrl+K:clear"
+                format!(" Enter:send | /:cmd | {} | Ctrl+N:new", mode_hint)
             }
         }
-        InputMode::Command => " Enter:exec | Esc:cancel | Tab:autocomplete",
+        InputMode::Command => " Enter:exec | Esc:cancel | Tab:autocomplete".to_string(),
     };
 
     let status_text = if app.status.is_empty() {
-        help.to_string()
+        help
     } else {
         format!("{} │ {}", app.status, help)
     };

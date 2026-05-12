@@ -3,6 +3,10 @@ name = "catcode-plugin"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["wasm"]
+wasm = ["dep:wasmtime", "dep:wasmtime-wasi"]
+
 [dependencies]
 catcode-core = { path = "../catcode-core" }
 serde = { workspace = true }
@@ -13,3 +17,5 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
 toml = { workspace = true }
+wasmtime = { version = "29", optional = true }
+wasmtime-wasi = { version = "29", optional = true }

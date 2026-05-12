@@ -14,6 +14,7 @@
 pub mod mcp;
 pub mod plugin;
 pub mod skill;
+pub mod wasm_sandbox;
 
 use std::path::Path;
 use std::sync::Arc;

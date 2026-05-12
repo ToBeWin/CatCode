@@ -1,5 +1,6 @@
 use catcode_daemon::{Session, SessionManager, SessionState};
 use std::path::PathBuf;
+use std::time::Instant;
 
 /// Input mode for the TUI.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -8,6 +9,97 @@ pub enum InputMode {
     Normal,
     /// Command mode — typing a `/` command.
     Command,
+}
+
+/// Cat mascot state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CatState {
+    /// Idle — cat is sleeping.
+    Idle,
+    /// Thinking — cat is pondering.
+    Thinking,
+    /// Executing — cat is working.
+    Executing,
+    /// Error — cat is surprised.
+    Error,
+    /// Done — cat is happy.
+    Done,
+}
+
+impl CatState {
+    pub fn ascii_art(&self) -> &'static str {
+        match self {
+            CatState::Idle => CAT_IDLE,
+            CatState::Thinking => CAT_THINKING,
+            CatState::Executing => CAT_EXECUTING,
+            CatState::Error => CAT_ERROR,
+            CatState::Done => CAT_DONE,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            CatState::Idle => "sleeping",
+            CatState::Thinking => "thinking",
+            CatState::Executing => "working",
+            CatState::Error => "surprised",
+            CatState::Done => "happy",
+        }
+    }
+}
+
+const CAT_IDLE: &str = "  =^._.^=zzZ";
+const CAT_THINKING: &str = "  =^.^= ...";
+const CAT_EXECUTING: &str = "  =^.^=ﾉ";
+const CAT_ERROR: &str = "  =O.O= !";
+const CAT_DONE: &str = "  =^.^=~";
+
+/// Agent execution mode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentMode {
+    /// Plan mode — agent only analyzes and plans, no tool execution.
+    Plan,
+    /// Act mode — agent executes tools normally (default).
+    Act,
+    /// Auto mode — agent plans first, then executes after user approval.
+    Auto,
+}
+
+/// Goal status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GoalStatus {
+    Active,
+    Paused,
+    BudgetLimited,
+    Complete,
+}
+
+/// A goal that drives autonomous agent execution.
+#[derive(Debug, Clone)]
+pub struct Goal {
+    pub objective: String,
+    pub status: GoalStatus,
+    pub token_budget: Option<u64>,
+    pub tokens_used: u64,
+    pub started_at: Instant,
+}
+
+impl AgentMode {
+    pub fn label(&self) -> &'static str {
+        match self {
+            AgentMode::Plan => "Plan",
+            AgentMode::Act => "Act",
+            AgentMode::Auto => "Auto",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            AgentMode::Plan => "Planning only — no tool execution",
+            AgentMode::Act => "Normal execution — tools available",
+            AgentMode::Auto => "Plan first, execute after approval",
+        }
+    }
 }
 
 /// A chat message displayed in the main content area.
@@ -51,6 +143,14 @@ pub struct App {
     pub token_display: TokenDisplay,
     /// Status message for the bottom bar.
     pub status: String,
+    /// Current agent execution mode.
+    pub agent_mode: AgentMode,
+    /// Active goal (if any).
+    pub goal: Option<Goal>,
+    /// Whether the cat mascot is enabled.
+    pub cat_enabled: bool,
+    /// Current cat mascot state.
+    pub cat_state: CatState,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -76,6 +176,10 @@ impl App {
             scroll_offset: 0,
             token_display: TokenDisplay::default(),
             status: String::new(),
+            agent_mode: AgentMode::Act,
+            goal: None,
+            cat_enabled: true,
+            cat_state: CatState::Idle,
         }
     }
 
@@ -284,8 +388,80 @@ impl App {
                     self.status = format!("Current model: {} | Usage: /model <name>", current);
                 }
             }
+            "plan" | "p" => {
+                self.set_agent_mode(AgentMode::Plan);
+            }
+            "act" | "a" => {
+                self.set_agent_mode(AgentMode::Act);
+            }
+            "auto" => {
+                self.set_agent_mode(AgentMode::Auto);
+            }
+            "cat" | "c" => {
+                if let Some(sub) = parts.get(1) {
+                    match sub.trim() {
+                        "on" => {
+                            self.cat_enabled = true;
+                            self.status = "Cat mascot enabled".to_string();
+                        }
+                        "off" => {
+                            self.cat_enabled = false;
+                            self.status = "Cat mascot disabled".to_string();
+                        }
+                        _ => {
+                            self.status = "Usage: /cat on|off".to_string();
+                        }
+                    }
+                } else {
+                    self.cat_enabled = !self.cat_enabled;
+                    self.status = if self.cat_enabled {
+                        "Cat mascot enabled".to_string()
+                    } else {
+                        "Cat mascot disabled".to_string()
+                    };
+                }
+            }
+            "goal" | "g" => {
+                if let Some(sub) = parts.get(1) {
+                    let sub_parts: Vec<&str> = sub.splitn(2, ' ').collect();
+                    match sub_parts[0] {
+                        "status" => {
+                            self.status = self.goal_status_display();
+                        }
+                        "pause" => {
+                            self.pause_goal();
+                        }
+                        "resume" => {
+                            self.resume_goal();
+                        }
+                        "budget" => {
+                            if let Some(amount) = sub_parts.get(1) {
+                                if let Ok(budget) = amount.parse::<u64>() {
+                                    self.set_goal_budget(budget);
+                                } else {
+                                    self.status = "Usage: /goal budget <tokens>".to_string();
+                                }
+                            } else {
+                                self.status = "Usage: /goal budget <tokens>".to_string();
+                            }
+                        }
+                        "clear" => {
+                            self.clear_goal();
+                        }
+                        "complete" => {
+                            self.complete_goal();
+                        }
+                        _ => {
+                            // /goal <objective> — create a new goal
+                            self.create_goal(sub, None);
+                        }
+                    }
+                } else {
+                    self.status = self.goal_status_display();
+                }
+            }
             "help" | "h" => {
-                self.status = "/new | /sessions | /switch <n> | /close | /clear | /model | /usage | /quit".to_string();
+                self.status = "/new | /sessions | /switch | /close | /clear | /model | /usage | /plan | /act | /auto | /goal | /quit".to_string();
             }
             _ => {
                 self.status = format!("Unknown command: /{}", parts[0]);
@@ -338,6 +514,185 @@ impl App {
     /// Quit the application.
     pub fn quit(&mut self) {
         self.should_quit = true;
+    }
+
+    /// Set the agent mode.
+    pub fn set_agent_mode(&mut self, mode: AgentMode) {
+        self.agent_mode = mode;
+        self.status = format!("Mode: {} — {}", self.agent_mode.label(), self.agent_mode.description());
+    }
+
+    /// Toggle between Plan and Act mode.
+    pub fn toggle_plan_act(&mut self) {
+        match self.agent_mode {
+            AgentMode::Plan => self.set_agent_mode(AgentMode::Act),
+            AgentMode::Act | AgentMode::Auto => self.set_agent_mode(AgentMode::Plan),
+        }
+    }
+
+    /// Get the system prompt suffix for the current agent mode.
+    pub fn agent_mode_system_suffix(&self) -> Option<String> {
+        match self.agent_mode {
+            AgentMode::Plan => Some(
+                "You are in PLAN MODE. You MUST NOT execute any tools. \
+                 Only analyze the codebase and produce a detailed execution plan. \
+                 Present your plan in a clear, numbered list of steps. \
+                 Wait for the user to switch to Act mode before executing."
+                    .to_string(),
+            ),
+            AgentMode::Act => None,
+            AgentMode::Auto => Some(
+                "You are in AUTO MODE. First, output a concise execution plan \
+                 under a `## Plan` heading. Then wait for user confirmation \
+                 before executing. If the user says 'go' or 'execute', \
+                 proceed with tool calls."
+                    .to_string(),
+            ),
+        }
+    }
+
+    // === Goal management ===
+
+    /// Create a new goal.
+    pub fn create_goal(&mut self, objective: &str, token_budget: Option<u64>) {
+        self.goal = Some(Goal {
+            objective: objective.to_string(),
+            status: GoalStatus::Active,
+            token_budget,
+            tokens_used: 0,
+            started_at: Instant::now(),
+        });
+        self.status = format!("Goal created: {}", objective);
+    }
+
+    /// Get the current goal status as a display string.
+    pub fn goal_status_display(&self) -> String {
+        match &self.goal {
+            None => "No active goal".to_string(),
+            Some(goal) => {
+                let status = match goal.status {
+                    GoalStatus::Active => "active",
+                    GoalStatus::Paused => "paused",
+                    GoalStatus::BudgetLimited => "limited by budget",
+                    GoalStatus::Complete => "complete",
+                };
+                let elapsed = goal.started_at.elapsed().as_secs();
+                let time_str = format_elapsed_time(elapsed);
+                let mut parts = vec![
+                    format!("Status: {}", status),
+                    format!("Objective: {}", goal.objective),
+                    format!("Time: {}", time_str),
+                    format!("Tokens: {}", goal.tokens_used),
+                ];
+                if let Some(budget) = goal.token_budget {
+                    parts.push(format!("Budget: {}", budget));
+                }
+                parts.join(" | ")
+            }
+        }
+    }
+
+    /// Pause the active goal.
+    pub fn pause_goal(&mut self) {
+        if let Some(goal) = &mut self.goal {
+            if goal.status == GoalStatus::Active {
+                goal.status = GoalStatus::Paused;
+                self.status = "Goal paused".to_string();
+            } else {
+                self.status = format!("Cannot pause goal (status: {:?})", goal.status);
+            }
+        } else {
+            self.status = "No active goal".to_string();
+        }
+    }
+
+    /// Resume a paused goal.
+    pub fn resume_goal(&mut self) {
+        if let Some(goal) = &mut self.goal {
+            if goal.status == GoalStatus::Paused {
+                goal.status = GoalStatus::Active;
+                self.status = "Goal resumed".to_string();
+            } else {
+                self.status = format!("Cannot resume goal (status: {:?})", goal.status);
+            }
+        } else {
+            self.status = "No active goal".to_string();
+        }
+    }
+
+    /// Set the token budget for the current goal.
+    pub fn set_goal_budget(&mut self, budget: u64) {
+        if let Some(goal) = &mut self.goal {
+            goal.token_budget = Some(budget);
+            self.status = format!("Goal budget set to {} tokens", budget);
+        } else {
+            self.status = "No active goal".to_string();
+        }
+    }
+
+    /// Clear the current goal.
+    pub fn clear_goal(&mut self) {
+        self.goal = None;
+        self.status = "Goal cleared".to_string();
+    }
+
+    /// Update goal token usage. Returns true if budget is exhausted.
+    pub fn update_goal_tokens(&mut self, tokens: u64) -> bool {
+        if let Some(goal) = &mut self.goal {
+            goal.tokens_used += tokens;
+            if let Some(budget) = goal.token_budget
+                && goal.tokens_used >= budget
+            {
+                goal.status = GoalStatus::BudgetLimited;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if the goal is active and should drive autonomous execution.
+    pub fn is_goal_active(&self) -> bool {
+        self.goal
+            .as_ref()
+            .map(|g| g.status == GoalStatus::Active)
+            .unwrap_or(false)
+    }
+
+    /// Mark the goal as complete.
+    pub fn complete_goal(&mut self) {
+        if let Some(goal) = &mut self.goal {
+            goal.status = GoalStatus::Complete;
+            self.status = format!("Goal completed: {}", goal.objective);
+        }
+    }
+
+    // === Cat mascot ===
+
+    /// Set the cat mascot state.
+    pub fn set_cat_state(&mut self, state: CatState) {
+        self.cat_state = state;
+    }
+
+    /// Get the cat ASCII art for the current state.
+    pub fn cat_art(&self) -> &'static str {
+        if self.cat_enabled {
+            self.cat_state.ascii_art()
+        } else {
+            ""
+        }
+    }
+}
+
+/// Format elapsed seconds into a human-readable string.
+fn format_elapsed_time(seconds: u64) -> String {
+    if seconds < 60 {
+        format!("{}s", seconds)
+    } else if seconds < 3600 {
+        format!("{}m", seconds / 60)
+    } else {
+        let hours = seconds / 3600;
+        let mins = (seconds % 3600) / 60;
+        format!("{}h {}m", hours, mins)
     }
 }
 
@@ -600,5 +955,400 @@ mod tests {
         let session = app.active_session_mut().unwrap();
         session.model_id = "new-model".to_string();
         assert_eq!(app.active_session().unwrap().model_id, "new-model");
+    }
+
+    // === AgentMode tests ===
+
+    #[test]
+    fn test_agent_mode_default() {
+        let app = make_app();
+        assert_eq!(app.agent_mode, AgentMode::Act);
+    }
+
+    #[test]
+    fn test_set_agent_mode() {
+        let mut app = make_app();
+        app.set_agent_mode(AgentMode::Plan);
+        assert_eq!(app.agent_mode, AgentMode::Plan);
+        assert!(app.status.contains("Plan"));
+
+        app.set_agent_mode(AgentMode::Auto);
+        assert_eq!(app.agent_mode, AgentMode::Auto);
+        assert!(app.status.contains("Auto"));
+    }
+
+    #[test]
+    fn test_toggle_plan_act() {
+        let mut app = make_app();
+        assert_eq!(app.agent_mode, AgentMode::Act);
+
+        // Act -> Plan
+        app.toggle_plan_act();
+        assert_eq!(app.agent_mode, AgentMode::Plan);
+
+        // Plan -> Act
+        app.toggle_plan_act();
+        assert_eq!(app.agent_mode, AgentMode::Act);
+
+        // Auto -> Plan
+        app.set_agent_mode(AgentMode::Auto);
+        app.toggle_plan_act();
+        assert_eq!(app.agent_mode, AgentMode::Plan);
+    }
+
+    #[test]
+    fn test_agent_mode_labels() {
+        assert_eq!(AgentMode::Plan.label(), "Plan");
+        assert_eq!(AgentMode::Act.label(), "Act");
+        assert_eq!(AgentMode::Auto.label(), "Auto");
+    }
+
+    #[test]
+    fn test_agent_mode_system_suffix() {
+        let mut app = make_app();
+
+        // Act mode — no suffix
+        assert!(app.agent_mode_system_suffix().is_none());
+
+        // Plan mode — has suffix about no tools
+        app.set_agent_mode(AgentMode::Plan);
+        let suffix = app.agent_mode_system_suffix().unwrap();
+        assert!(suffix.contains("PLAN MODE"));
+        assert!(suffix.contains("MUST NOT"));
+
+        // Auto mode — has suffix about planning first
+        app.set_agent_mode(AgentMode::Auto);
+        let suffix = app.agent_mode_system_suffix().unwrap();
+        assert!(suffix.contains("AUTO MODE"));
+    }
+
+    #[test]
+    fn test_command_plan() {
+        let mut app = make_app();
+        app.enter_command_mode();
+        app.command_input = "plan".to_string();
+        app.submit_input();
+        assert_eq!(app.agent_mode, AgentMode::Plan);
+    }
+
+    #[test]
+    fn test_command_act() {
+        let mut app = make_app();
+        app.set_agent_mode(AgentMode::Plan);
+        app.enter_command_mode();
+        app.command_input = "act".to_string();
+        app.submit_input();
+        assert_eq!(app.agent_mode, AgentMode::Act);
+    }
+
+    #[test]
+    fn test_command_auto() {
+        let mut app = make_app();
+        app.enter_command_mode();
+        app.command_input = "auto".to_string();
+        app.submit_input();
+        assert_eq!(app.agent_mode, AgentMode::Auto);
+    }
+
+    // === Goal tests ===
+
+    #[test]
+    fn test_goal_default_none() {
+        let app = make_app();
+        assert!(app.goal.is_none());
+        assert!(!app.is_goal_active());
+    }
+
+    #[test]
+    fn test_create_goal() {
+        let mut app = make_app();
+        app.create_goal("fix auth bug", Some(10000));
+        assert!(app.goal.is_some());
+        let goal = app.goal.as_ref().unwrap();
+        assert_eq!(goal.objective, "fix auth bug");
+        assert_eq!(goal.status, GoalStatus::Active);
+        assert_eq!(goal.token_budget, Some(10000));
+        assert_eq!(goal.tokens_used, 0);
+        assert!(app.is_goal_active());
+    }
+
+    #[test]
+    fn test_goal_status_display() {
+        let mut app = make_app();
+        assert_eq!(app.goal_status_display(), "No active goal");
+
+        app.create_goal("refactor db", None);
+        let display = app.goal_status_display();
+        assert!(display.contains("active"));
+        assert!(display.contains("refactor db"));
+        assert!(display.contains("Tokens: 0"));
+    }
+
+    #[test]
+    fn test_pause_goal() {
+        let mut app = make_app();
+        app.create_goal("test goal", None);
+
+        app.pause_goal();
+        assert_eq!(app.goal.as_ref().unwrap().status, GoalStatus::Paused);
+        assert!(!app.is_goal_active());
+
+        // Cannot pause again
+        app.pause_goal();
+        assert!(app.status.contains("Cannot pause"));
+    }
+
+    #[test]
+    fn test_pause_goal_none() {
+        let mut app = make_app();
+        app.pause_goal();
+        assert_eq!(app.status, "No active goal");
+    }
+
+    #[test]
+    fn test_resume_goal() {
+        let mut app = make_app();
+        app.create_goal("test goal", None);
+        app.pause_goal();
+
+        app.resume_goal();
+        assert_eq!(app.goal.as_ref().unwrap().status, GoalStatus::Active);
+        assert!(app.is_goal_active());
+    }
+
+    #[test]
+    fn test_resume_goal_none() {
+        let mut app = make_app();
+        app.resume_goal();
+        assert_eq!(app.status, "No active goal");
+    }
+
+    #[test]
+    fn test_set_goal_budget() {
+        let mut app = make_app();
+        app.create_goal("test goal", None);
+
+        app.set_goal_budget(50000);
+        assert_eq!(app.goal.as_ref().unwrap().token_budget, Some(50000));
+        assert!(app.status.contains("50000"));
+    }
+
+    #[test]
+    fn test_set_goal_budget_none() {
+        let mut app = make_app();
+        app.set_goal_budget(50000);
+        assert_eq!(app.status, "No active goal");
+    }
+
+    #[test]
+    fn test_clear_goal() {
+        let mut app = make_app();
+        app.create_goal("test goal", None);
+        assert!(app.goal.is_some());
+
+        app.clear_goal();
+        assert!(app.goal.is_none());
+        assert!(app.status.contains("cleared"));
+    }
+
+    #[test]
+    fn test_update_goal_tokens() {
+        let mut app = make_app();
+        app.create_goal("test goal", Some(1000));
+
+        let exhausted = app.update_goal_tokens(500);
+        assert!(!exhausted);
+        assert_eq!(app.goal.as_ref().unwrap().tokens_used, 500);
+
+        let exhausted = app.update_goal_tokens(500);
+        assert!(exhausted);
+        assert_eq!(app.goal.as_ref().unwrap().status, GoalStatus::BudgetLimited);
+        assert!(!app.is_goal_active());
+    }
+
+    #[test]
+    fn test_update_goal_tokens_no_budget() {
+        let mut app = make_app();
+        app.create_goal("test goal", None);
+
+        let exhausted = app.update_goal_tokens(10000);
+        assert!(!exhausted);
+        assert_eq!(app.goal.as_ref().unwrap().tokens_used, 10000);
+    }
+
+    #[test]
+    fn test_complete_goal() {
+        let mut app = make_app();
+        app.create_goal("test goal", None);
+
+        app.complete_goal();
+        assert_eq!(app.goal.as_ref().unwrap().status, GoalStatus::Complete);
+        assert!(!app.is_goal_active());
+        assert!(app.status.contains("completed"));
+    }
+
+    #[test]
+    fn test_command_goal_create() {
+        let mut app = make_app();
+        app.enter_command_mode();
+        app.command_input = "goal fix auth bug".to_string();
+        app.submit_input();
+        assert!(app.goal.is_some());
+        assert_eq!(app.goal.as_ref().unwrap().objective, "fix auth bug");
+    }
+
+    #[test]
+    fn test_command_goal_status() {
+        let mut app = make_app();
+        app.create_goal("test", None);
+        app.enter_command_mode();
+        app.command_input = "goal status".to_string();
+        app.submit_input();
+        assert!(app.status.contains("active"));
+    }
+
+    #[test]
+    fn test_command_goal_pause_resume() {
+        let mut app = make_app();
+        app.create_goal("test", None);
+
+        app.enter_command_mode();
+        app.command_input = "goal pause".to_string();
+        app.submit_input();
+        assert_eq!(app.goal.as_ref().unwrap().status, GoalStatus::Paused);
+
+        app.enter_command_mode();
+        app.command_input = "goal resume".to_string();
+        app.submit_input();
+        assert_eq!(app.goal.as_ref().unwrap().status, GoalStatus::Active);
+    }
+
+    #[test]
+    fn test_command_goal_budget() {
+        let mut app = make_app();
+        app.create_goal("test", None);
+
+        app.enter_command_mode();
+        app.command_input = "goal budget 25000".to_string();
+        app.submit_input();
+        assert_eq!(app.goal.as_ref().unwrap().token_budget, Some(25000));
+    }
+
+    #[test]
+    fn test_command_goal_clear() {
+        let mut app = make_app();
+        app.create_goal("test", None);
+
+        app.enter_command_mode();
+        app.command_input = "goal clear".to_string();
+        app.submit_input();
+        assert!(app.goal.is_none());
+    }
+
+    #[test]
+    fn test_command_goal_no_args() {
+        let mut app = make_app();
+        app.enter_command_mode();
+        app.command_input = "goal".to_string();
+        app.submit_input();
+        assert_eq!(app.status, "No active goal");
+    }
+
+    #[test]
+    fn test_format_elapsed_time() {
+        assert_eq!(format_elapsed_time(0), "0s");
+        assert_eq!(format_elapsed_time(59), "59s");
+        assert_eq!(format_elapsed_time(60), "1m");
+        assert_eq!(format_elapsed_time(3599), "59m");
+        assert_eq!(format_elapsed_time(3600), "1h 0m");
+        assert_eq!(format_elapsed_time(3661), "1h 1m");
+    }
+
+    // === Cat mascot tests ===
+
+    #[test]
+    fn test_cat_default_enabled() {
+        let app = make_app();
+        assert!(app.cat_enabled);
+        assert_eq!(app.cat_state, CatState::Idle);
+    }
+
+    #[test]
+    fn test_cat_state_ascii_art() {
+        assert!(CatState::Idle.ascii_art().contains("=^._.^="));
+        assert!(CatState::Thinking.ascii_art().contains("=^.^="));
+        assert!(CatState::Executing.ascii_art().contains("=^.^="));
+        assert!(CatState::Error.ascii_art().contains("=O.O="));
+        assert!(CatState::Done.ascii_art().contains("=^.^="));
+    }
+
+    #[test]
+    fn test_cat_state_labels() {
+        assert_eq!(CatState::Idle.label(), "sleeping");
+        assert_eq!(CatState::Thinking.label(), "thinking");
+        assert_eq!(CatState::Executing.label(), "working");
+        assert_eq!(CatState::Error.label(), "surprised");
+        assert_eq!(CatState::Done.label(), "happy");
+    }
+
+    #[test]
+    fn test_set_cat_state() {
+        let mut app = make_app();
+        app.set_cat_state(CatState::Thinking);
+        assert_eq!(app.cat_state, CatState::Thinking);
+        app.set_cat_state(CatState::Executing);
+        assert_eq!(app.cat_state, CatState::Executing);
+    }
+
+    #[test]
+    fn test_cat_art_enabled() {
+        let mut app = make_app();
+        app.cat_enabled = true;
+        app.set_cat_state(CatState::Idle);
+        assert!(app.cat_art().contains("=^._.^="));
+
+        app.set_cat_state(CatState::Error);
+        assert!(app.cat_art().contains("=O.O="));
+    }
+
+    #[test]
+    fn test_cat_art_disabled() {
+        let mut app = make_app();
+        app.cat_enabled = false;
+        assert_eq!(app.cat_art(), "");
+    }
+
+    #[test]
+    fn test_command_cat_toggle() {
+        let mut app = make_app();
+        assert!(app.cat_enabled);
+
+        // /cat off
+        app.enter_command_mode();
+        app.command_input = "cat off".to_string();
+        app.submit_input();
+        assert!(!app.cat_enabled);
+
+        // /cat on
+        app.enter_command_mode();
+        app.command_input = "cat on".to_string();
+        app.submit_input();
+        assert!(app.cat_enabled);
+    }
+
+    #[test]
+    fn test_command_cat_no_args_toggles() {
+        let mut app = make_app();
+        assert!(app.cat_enabled);
+
+        app.enter_command_mode();
+        app.command_input = "cat".to_string();
+        app.submit_input();
+        assert!(!app.cat_enabled);
+
+        app.enter_command_mode();
+        app.command_input = "cat".to_string();
+        app.submit_input();
+        assert!(app.cat_enabled);
     }
 }

@@ -13,7 +13,7 @@ pub mod app;
 pub mod event;
 pub mod ui;
 
-pub use app::{App, InputMode};
+pub use app::{AgentMode, App, InputMode};
 
 use crossterm::{
     event::{KeyCode, KeyEvent, KeyModifiers},
@@ -147,6 +147,10 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.input.clear();
             app.input_cursor = 0;
+        }
+        // Ctrl+P — toggle plan/act mode
+        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.toggle_plan_act();
         }
         // Ctrl+1-9 — switch to session by number
         KeyCode::Char(c @ '1'..='9') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -388,5 +392,25 @@ mod tests {
 
         handle_key_event(&mut app, KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
         assert_eq!(app.scroll_offset, usize::MAX);
+    }
+
+    #[test]
+    fn test_handle_key_ctrl_p_toggle_mode() {
+        let mut app = App::new(PathBuf::from("/tmp"));
+        assert_eq!(app.agent_mode, app::AgentMode::Act);
+
+        // Ctrl+P -> Plan
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(app.agent_mode, app::AgentMode::Plan);
+
+        // Ctrl+P -> Act
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(app.agent_mode, app::AgentMode::Act);
     }
 }
