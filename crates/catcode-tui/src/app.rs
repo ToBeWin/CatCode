@@ -1,4 +1,7 @@
-use catcode_daemon::{Session, SessionManager, SessionState};
+use catcode_daemon::{
+    BenchmarkCase, BenchmarkReport, Session, SessionManager, SessionState,
+    default_benchmark_cases,
+};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -151,6 +154,10 @@ pub struct App {
     pub cat_enabled: bool,
     /// Current cat mascot state.
     pub cat_state: CatState,
+    /// Benchmark test cases.
+    pub benchmark_cases: Vec<BenchmarkCase>,
+    /// Benchmark reports (results).
+    pub benchmark_reports: Vec<BenchmarkReport>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -180,6 +187,8 @@ impl App {
             goal: None,
             cat_enabled: true,
             cat_state: CatState::Idle,
+            benchmark_cases: default_benchmark_cases(),
+            benchmark_reports: Vec::new(),
         }
     }
 
@@ -460,8 +469,51 @@ impl App {
                     self.status = self.goal_status_display();
                 }
             }
+            "benchmark" | "bench" | "b" => {
+                if let Some(sub) = parts.get(1) {
+                    match sub.trim() {
+                        "list" | "ls" => {
+                            let names: Vec<String> = self
+                                .benchmark_cases
+                                .iter()
+                                .map(|c| format!("{}: {}", c.id, c.name))
+                                .collect();
+                            self.status = if names.is_empty() {
+                                "No benchmark cases".to_string()
+                            } else {
+                                names.join(" | ")
+                            };
+                        }
+                        "results" | "r" => {
+                            if self.benchmark_reports.is_empty() {
+                                self.status = "No benchmark results yet".to_string();
+                            } else {
+                                let summaries: Vec<String> = self
+                                    .benchmark_reports
+                                    .iter()
+                                    .map(|r| r.summary_line())
+                                    .collect();
+                                self.status = summaries.join(" || ");
+                            }
+                        }
+                        "clear" => {
+                            self.benchmark_reports.clear();
+                            self.status = "Benchmark results cleared".to_string();
+                        }
+                        _ => {
+                            self.status =
+                                "Usage: /benchmark list|results|clear".to_string();
+                        }
+                    }
+                } else {
+                    self.status = format!(
+                        "Benchmark: {} cases loaded | /benchmark list|results|clear",
+                        self.benchmark_cases.len()
+                    );
+                }
+            }
             "help" | "h" => {
-                self.status = "/new | /sessions | /switch | /close | /clear | /model | /usage | /plan | /act | /auto | /goal | /quit".to_string();
+                self.status = "/new | /sessions | /switch | /close | /clear | /model | /usage | /plan | /act | /auto | /goal | /benchmark | /cat | /quit".to_string();
             }
             _ => {
                 self.status = format!("Unknown command: /{}", parts[0]);
@@ -679,6 +731,29 @@ impl App {
             self.cat_state.ascii_art()
         } else {
             ""
+        }
+    }
+
+    // === Benchmark ===
+
+    /// Add a benchmark report.
+    pub fn add_benchmark_report(&mut self, report: BenchmarkReport) {
+        self.status = format!(
+            "Benchmark: {}/{} — {}/{} passed ({:.0}%)",
+            report.provider_id,
+            report.model_id,
+            report.passed,
+            report.total_cases,
+            report.pass_rate * 100.0
+        );
+        self.benchmark_reports.push(report);
+    }
+
+    /// Get the latest benchmark report formatted as a table.
+    pub fn latest_benchmark_display(&self) -> String {
+        match self.benchmark_reports.last() {
+            Some(report) => catcode_daemon::format_report_table(report),
+            None => "No benchmark results yet".to_string(),
         }
     }
 }
@@ -1350,5 +1425,114 @@ mod tests {
         app.command_input = "cat".to_string();
         app.submit_input();
         assert!(app.cat_enabled);
+    }
+
+    // === Benchmark tests ===
+
+    #[test]
+    fn test_benchmark_default_cases() {
+        let app = make_app();
+        assert_eq!(app.benchmark_cases.len(), 5);
+        assert!(app.benchmark_cases.iter().any(|c| c.id == "hello-world"));
+    }
+
+    #[test]
+    fn test_benchmark_reports_empty() {
+        let app = make_app();
+        assert!(app.benchmark_reports.is_empty());
+    }
+
+    #[test]
+    fn test_add_benchmark_report() {
+        let mut app = make_app();
+        let report = BenchmarkReport::from_results(
+            "test",
+            "model",
+            vec![catcode_daemon::BenchmarkResult {
+                case_id: "a".to_string(),
+                provider_id: "test".to_string(),
+                model_id: "model".to_string(),
+                passed: true,
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_tokens: 0,
+                latency_ms: 200,
+                cost_usd: 0.001,
+                output_preview: String::new(),
+                error: None,
+            }],
+        );
+        app.add_benchmark_report(report);
+        assert_eq!(app.benchmark_reports.len(), 1);
+        assert!(app.status.contains("1/1 passed"));
+    }
+
+    #[test]
+    fn test_latest_benchmark_display_empty() {
+        let app = make_app();
+        assert_eq!(app.latest_benchmark_display(), "No benchmark results yet");
+    }
+
+    #[test]
+    fn test_latest_benchmark_display_with_report() {
+        let mut app = make_app();
+        let report = BenchmarkReport::from_results("test", "model", vec![]);
+        app.add_benchmark_report(report);
+        let display = app.latest_benchmark_display();
+        assert!(display.contains("=== test/model ==="));
+    }
+
+    #[test]
+    fn test_command_benchmark_no_args() {
+        let mut app = make_app();
+        app.enter_command_mode();
+        app.command_input = "benchmark".to_string();
+        app.submit_input();
+        assert!(app.status.contains("5 cases loaded"));
+    }
+
+    #[test]
+    fn test_command_benchmark_list() {
+        let mut app = make_app();
+        app.enter_command_mode();
+        app.command_input = "benchmark list".to_string();
+        app.submit_input();
+        assert!(app.status.contains("hello-world"));
+        assert!(app.status.contains("fibonacci"));
+    }
+
+    #[test]
+    fn test_command_benchmark_results_empty() {
+        let mut app = make_app();
+        app.enter_command_mode();
+        app.command_input = "benchmark results".to_string();
+        app.submit_input();
+        assert!(app.status.contains("No benchmark results"));
+    }
+
+    #[test]
+    fn test_command_benchmark_results_with_data() {
+        let mut app = make_app();
+        let report = BenchmarkReport::from_results("anthropic", "claude-sonnet-4", vec![]);
+        app.add_benchmark_report(report);
+
+        app.enter_command_mode();
+        app.command_input = "benchmark results".to_string();
+        app.submit_input();
+        assert!(app.status.contains("anthropic"));
+    }
+
+    #[test]
+    fn test_command_benchmark_clear() {
+        let mut app = make_app();
+        let report = BenchmarkReport::from_results("test", "model", vec![]);
+        app.add_benchmark_report(report);
+        assert_eq!(app.benchmark_reports.len(), 1);
+
+        app.enter_command_mode();
+        app.command_input = "benchmark clear".to_string();
+        app.submit_input();
+        assert!(app.benchmark_reports.is_empty());
+        assert!(app.status.contains("cleared"));
     }
 }

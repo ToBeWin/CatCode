@@ -14,6 +14,7 @@
 //! - **CheckpointManager** — Session state persistence to disk
 
 pub mod agent_loop;
+pub mod benchmark;
 pub mod checkpoint;
 pub mod concurrent_session;
 pub mod config;
@@ -23,6 +24,9 @@ pub mod session_manager;
 pub mod subagent;
 
 pub use agent_loop::{AgentLoop, AgentLoopError, AgentLoopResult};
+pub use benchmark::{
+    BenchmarkCase, BenchmarkReport, BenchmarkResult, default_benchmark_cases, format_report_table,
+};
 pub use checkpoint::{Checkpoint, CheckpointManager, CheckpointMeta};
 pub use concurrent_session::{
     ConcurrentSessionManager, SessionCommand, SessionEvent, SessionHandle,

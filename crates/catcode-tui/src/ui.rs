@@ -25,6 +25,9 @@ const COMMANDS: &[(&str, &str)] = &[
     ("goal resume", "Resume paused goal"),
     ("goal clear", "Clear current goal"),
     ("cat on|off", "Toggle cat mascot"),
+    ("benchmark list", "List benchmark cases"),
+    ("benchmark results", "Show benchmark results"),
+    ("benchmark clear", "Clear results"),
     ("quit", "Exit CatCode"),
 ];
 
