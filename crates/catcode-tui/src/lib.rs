@@ -62,7 +62,13 @@ async fn run_event_loop(
     app: &mut App,
     event_handler: &mut event::EventHandler,
 ) -> anyhow::Result<()> {
+    // Initialize agent communication channel
+    app.init_agent_channel();
+
     loop {
+        // Poll agent events before rendering
+        app.poll_agent_events();
+
         // Render
         terminal.draw(|f| ui::render(f, app))?;
 
@@ -113,7 +119,9 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) {
     match key.code {
         // Enter — submit message
         KeyCode::Enter => {
-            app.submit_input();
+            if let Some(text) = app.submit_input() {
+                app.send_to_agent(&text);
+            }
         }
         // Backspace
         KeyCode::Backspace => {
@@ -224,7 +232,14 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) {
         KeyCode::PageDown => {
             app.scroll_down(10);
         }
-        // Up/Down — scroll
+        // Ctrl+Up/Down — input history navigation
+        KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.history_up();
+        }
+        KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.history_down();
+        }
+        // Up/Down — scroll messages
         KeyCode::Up => {
             app.scroll_up(1);
         }

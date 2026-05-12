@@ -4,6 +4,24 @@ use catcode_daemon::{
 };
 use std::path::PathBuf;
 use std::time::Instant;
+use tokio::sync::mpsc;
+
+/// Events from the agent loop to the TUI.
+#[derive(Debug, Clone)]
+pub enum AgentEvent {
+    /// Agent produced text output.
+    AgentMessage(String),
+    /// Agent is calling a tool.
+    ToolCall { tool: String, args: String },
+    /// Tool execution completed.
+    ToolResult { tool: String, output: String },
+    /// Agent finished processing.
+    Completed,
+    /// Agent encountered an error.
+    Error(String),
+    /// Token usage update.
+    TokenUpdate { input: u64, output: u64, cache: u64 },
+}
 
 /// Input mode for the TUI.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,6 +176,18 @@ pub struct App {
     pub benchmark_cases: Vec<BenchmarkCase>,
     /// Benchmark reports (results).
     pub benchmark_reports: Vec<BenchmarkReport>,
+    /// Channel for receiving agent events.
+    pub agent_event_rx: Option<mpsc::UnboundedReceiver<AgentEvent>>,
+    /// Channel for sending agent events (cloned for background tasks).
+    pub agent_event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
+    /// Whether the agent is currently processing.
+    pub agent_busy: bool,
+    /// Input history for up/down navigation.
+    pub input_history: Vec<String>,
+    /// Current position in input history (None = not navigating).
+    pub history_index: Option<usize>,
+    /// Saved input when navigating history.
+    pub history_saved_input: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -189,6 +219,12 @@ impl App {
             cat_state: CatState::Idle,
             benchmark_cases: default_benchmark_cases(),
             benchmark_reports: Vec::new(),
+            agent_event_rx: None,
+            agent_event_tx: None,
+            agent_busy: false,
+            input_history: Vec::new(),
+            history_index: None,
+            history_saved_input: String::new(),
         }
     }
 
@@ -257,6 +293,49 @@ impl App {
         }
     }
 
+    /// Navigate up in input history.
+    pub fn history_up(&mut self) {
+        if self.input_mode != InputMode::Normal || self.input_history.is_empty() {
+            return;
+        }
+        match self.history_index {
+            None => {
+                // Save current input and go to latest
+                self.history_saved_input = self.input.clone();
+                self.history_index = Some(self.input_history.len() - 1);
+                self.input = self.input_history[self.input_history.len() - 1].clone();
+                self.input_cursor = self.input.len();
+            }
+            Some(i) if i > 0 => {
+                self.history_index = Some(i - 1);
+                self.input = self.input_history[i - 1].clone();
+                self.input_cursor = self.input.len();
+            }
+            _ => {}
+        }
+    }
+
+    /// Navigate down in input history.
+    pub fn history_down(&mut self) {
+        if self.input_mode != InputMode::Normal {
+            return;
+        }
+        match self.history_index {
+            Some(i) if i < self.input_history.len() - 1 => {
+                self.history_index = Some(i + 1);
+                self.input = self.input_history[i + 1].clone();
+                self.input_cursor = self.input.len();
+            }
+            Some(_) => {
+                // Back to current input
+                self.history_index = None;
+                self.input = self.history_saved_input.clone();
+                self.input_cursor = self.input.len();
+            }
+            None => {}
+        }
+    }
+
     /// Handle backspace.
     pub fn handle_backspace(&mut self) {
         match self.input_mode {
@@ -286,6 +365,12 @@ impl App {
                     return None;
                 }
                 let text = self.input.clone();
+                // Save to history (avoid consecutive duplicates)
+                if self.input_history.last().map(|s| s.as_str()) != Some(&text) {
+                    self.input_history.push(text.clone());
+                }
+                self.history_index = None;
+                self.history_saved_input.clear();
                 self.input.clear();
                 self.input_cursor = 0;
                 self.add_message(MessageRole::User, &text);
@@ -521,7 +606,37 @@ impl App {
                 }
             }
             "help" | "h" => {
-                self.status = "/new | /sessions | /switch | /close | /clear | /model | /usage | /plan | /act | /auto | /goal | /benchmark | /cat | /quit".to_string();
+                self.add_message(
+                    MessageRole::System,
+                    "=== CatCode Help ===\n\
+                     \n\
+                     Commands:\n\
+                     /new <name>       Create a new session\n\
+                     /sessions         List all sessions\n\
+                     /switch <n|name>  Switch to session\n\
+                     /close            Close current session\n\
+                     /clear            Clear messages\n\
+                     /model <name>     Set/view model\n\
+                     /usage            Show token usage\n\
+                     /plan             Enter plan mode (no tools)\n\
+                     /act              Enter act mode (default)\n\
+                     /auto             Plan first, then execute\n\
+                     /goal <objective> Create autonomous goal\n\
+                     /cat on|off       Toggle cat mascot\n\
+                     /benchmark        Run evaluation tests\n\
+                     /quit             Exit CatCode\n\
+                     \n\
+                     Keyboard Shortcuts:\n\
+                     Enter             Send message\n\
+                     Ctrl+P            Toggle plan/act mode\n\
+                     Ctrl+N            New session\n\
+                     Ctrl+W            Close session\n\
+                     Ctrl+1-9          Switch to session N\n\
+                     Ctrl+Up/Down      Input history\n\
+                     Up/Down           Scroll messages\n\
+                     PageUp/PageDown   Scroll faster\n\
+                     Home/End          Jump to top/bottom",
+                );
             }
             _ => {
                 self.status = format!("Unknown command: /{}", parts[0]);
@@ -763,6 +878,134 @@ impl App {
             Some(report) => catcode_daemon::format_report_table(report),
             None => "No benchmark results yet".to_string(),
         }
+    }
+
+    // === Agent communication ===
+
+    /// Initialize the agent event channel.
+    pub fn init_agent_channel(&mut self) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.agent_event_tx = Some(tx);
+        self.agent_event_rx = Some(rx);
+    }
+
+    /// Send a message to the agent and process it in the background.
+    /// This spawns a background task that simulates agent processing.
+    pub fn send_to_agent(&mut self, message: &str) {
+        if self.agent_busy {
+            self.status = "Agent is still processing...".to_string();
+            return;
+        }
+
+        let tx = self.agent_event_tx.clone();
+        if let Some(tx) = tx {
+            self.agent_busy = true;
+            self.set_cat_state(CatState::Thinking);
+            let msg = message.to_string();
+
+            // Spawn a background task to simulate agent processing
+            tokio::spawn(async move {
+                // Simulate thinking time
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+                // Simulate tool call
+                let _ = tx.send(AgentEvent::ToolCall {
+                    tool: "thinking".to_string(),
+                    args: "{}".to_string(),
+                });
+
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+                // Generate a response based on the input
+                let response = generate_response(&msg);
+
+                // Send the response
+                let _ = tx.send(AgentEvent::AgentMessage(response));
+                let _ = tx.send(AgentEvent::Completed);
+            });
+        }
+    }
+
+    /// Process pending agent events. Returns true if any events were processed.
+    pub fn poll_agent_events(&mut self) -> bool {
+        // Collect events first to avoid borrow checker issues
+        let mut events = Vec::new();
+        if let Some(rx) = &mut self.agent_event_rx {
+            while let Ok(event) = rx.try_recv() {
+                events.push(event);
+            }
+        }
+
+        let had_events = !events.is_empty();
+        for event in events {
+            match event {
+                AgentEvent::AgentMessage(msg) => {
+                    self.add_message(MessageRole::Assistant, &msg);
+                    self.set_cat_state(CatState::Done);
+                }
+                AgentEvent::ToolCall { tool, args } => {
+                    self.add_message(
+                        MessageRole::Tool,
+                        format!("Calling tool: {}({})", tool, args),
+                    );
+                    self.set_cat_state(CatState::Executing);
+                }
+                AgentEvent::ToolResult { tool, output } => {
+                    self.add_message(
+                        MessageRole::Tool,
+                        format!("{} result: {}", tool, output),
+                    );
+                }
+                AgentEvent::Completed => {
+                    self.agent_busy = false;
+                    self.set_cat_state(CatState::Idle);
+                }
+                AgentEvent::Error(err) => {
+                    self.add_message(MessageRole::System, format!("Error: {}", err));
+                    self.agent_busy = false;
+                    self.set_cat_state(CatState::Error);
+                }
+                AgentEvent::TokenUpdate { input, output, cache } => {
+                    self.token_display.input_tokens += input;
+                    self.token_display.output_tokens += output;
+                    self.token_display.cache_tokens += cache;
+                }
+            }
+        }
+        had_events
+    }
+}
+
+/// Generate a simple response based on user input.
+/// This is a placeholder until full agent integration.
+fn generate_response(input: &str) -> String {
+    let lower = input.to_lowercase();
+    if lower.contains("hello") || lower.contains("hi") {
+        "Hello! I'm CatCode, your AI coding assistant. How can I help you today?".to_string()
+    } else if lower.contains("help") {
+        "I can help you with coding tasks. Try asking me to:\n\
+         - Read or write files\n\
+         - Run commands\n\
+         - Explain code\n\
+         - Fix bugs\n\
+         Use /help for available commands.".to_string()
+    } else if lower.contains("test") {
+        "I'd be happy to help with testing! You can:\n\
+         - Run existing tests with `cargo test`\n\
+         - Write new tests\n\
+         - Analyze test coverage".to_string()
+    } else if lower.contains("bug") || lower.contains("fix") {
+        "Let me help you fix that bug. Could you provide more details about:\n\
+         - What's the expected behavior?\n\
+         - What's the actual behavior?\n\
+         - Any error messages?".to_string()
+    } else {
+        format!(
+            "I received your message: \"{}\"\n\n\
+             I'm currently in demo mode. Full agent integration is coming soon!\n\
+             For now, try asking about testing, bugs, or say hello.",
+            input
+        )
     }
 }
 
@@ -1590,5 +1833,99 @@ mod tests {
         app.submit_input();
         assert!(app.benchmark_reports.is_empty());
         assert!(app.status.contains("cleared"));
+    }
+
+    #[test]
+    fn test_input_history_saved_on_submit() {
+        let mut app = make_app();
+        app.input = "first message".to_string();
+        app.input_cursor = 13;
+        app.submit_input();
+
+        app.input = "second message".to_string();
+        app.input_cursor = 14;
+        app.submit_input();
+
+        assert_eq!(app.input_history, vec!["first message", "second message"]);
+    }
+
+    #[test]
+    fn test_input_history_no_duplicate() {
+        let mut app = make_app();
+        app.input = "same".to_string();
+        app.input_cursor = 4;
+        app.submit_input();
+
+        app.input = "same".to_string();
+        app.input_cursor = 4;
+        app.submit_input();
+
+        assert_eq!(app.input_history.len(), 1);
+    }
+
+    #[test]
+    fn test_history_up_navigation() {
+        let mut app = make_app();
+        app.input = "first".to_string();
+        app.input_cursor = 5;
+        app.submit_input();
+
+        app.input = "second".to_string();
+        app.input_cursor = 6;
+        app.submit_input();
+
+        // Navigate up
+        app.history_up();
+        assert_eq!(app.input, "second");
+        assert_eq!(app.input_cursor, 6);
+
+        app.history_up();
+        assert_eq!(app.input, "first");
+        assert_eq!(app.input_cursor, 5);
+    }
+
+    #[test]
+    fn test_history_down_navigation() {
+        let mut app = make_app();
+        app.input = "first".to_string();
+        app.input_cursor = 5;
+        app.submit_input();
+
+        app.input = "second".to_string();
+        app.input_cursor = 6;
+        app.submit_input();
+
+        // Go up twice
+        app.history_up();
+        app.history_up();
+        assert_eq!(app.input, "first");
+
+        // Go down once
+        app.history_down();
+        assert_eq!(app.input, "second");
+
+        // Go down again restores saved input
+        app.history_down();
+        assert_eq!(app.input, "");
+        assert!(app.history_index.is_none());
+    }
+
+    #[test]
+    fn test_history_preserves_current_input() {
+        let mut app = make_app();
+        app.input = "old".to_string();
+        app.input_cursor = 3;
+        app.submit_input();
+
+        app.input = "typing somethi".to_string();
+        app.input_cursor = 14;
+
+        // Navigate up
+        app.history_up();
+        assert_eq!(app.input, "old");
+
+        // Navigate down restores what we were typing
+        app.history_down();
+        assert_eq!(app.input, "typing somethi");
     }
 }
