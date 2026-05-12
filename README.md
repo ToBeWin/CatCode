@@ -8,12 +8,16 @@ CatCode is an AI coding agent that works with any mainstream model (domestic and
 
 ### Key Features
 
-- **Model Agnostic** — Anthropic, DeepSeek, Ollama, OpenAI, Qwen, and more
+- **Model Agnostic** — Anthropic, DeepSeek, Ollama, OpenAI, Qwen, Google Gemini, MiniMax, GLM
 - **Harness Engineering** — Circuit breaker, retry, output validation, model routing
 - **Context Engineering** — Layered context, smart compression, token budget management
 - **Daemon Architecture** — Background multi-agent concurrency, remote control via API
-- **Sandbox Isolation** — Operation safety classification, approval gates
-- **Extensible** — Skills (TOML), Plugins (Rust), MCP (Model Context Protocol)
+- **Sandbox Isolation** — Operation safety classification, approval gates, WASM plugin sandbox
+- **Extensible** — Skills (TOML), Plugins (Rust/WASM), MCP (Model Context Protocol)
+- **Plan/Act Mode** — Plan mode for analysis, Act mode for execution, Auto mode for planning then executing
+- **Goal Mode** — Autonomous goal-driven execution with token budget tracking
+- **Benchmark** — Built-in evaluation system for provider+model combinations
+- **Cat Mascot** — ASCII art cat with state-based animations
 
 ## Architecture
 
@@ -28,10 +32,10 @@ catcode-daemon (Session Manager + Agent Loop)
     │
     ├─► catcode-middleware (Circuit Breaker + Retry + Model Router)
     ├─► catcode-context (Layered Context + Token Budget + Prompt Cache)
-    ├─► catcode-provider (Anthropic + DeepSeek + Ollama + OpenAI)
+    ├─► catcode-provider (Anthropic + DeepSeek + Ollama + OpenAI + Qwen + Google + MiniMax + GLM)
     ├─► catcode-tools (read_file + write_file + bash + search)
     ├─► catcode-sandbox (Docker + Operation Classification)
-    └─► catcode-plugin (Skills + Plugins + MCP)
+    └─► catcode-plugin (Skills + Plugins + MCP + WASM Sandbox)
 ```
 
 ## Crate Structure
@@ -42,11 +46,11 @@ catcode-daemon (Session Manager + Agent Loop)
 | `catcode-provider` | Model provider abstraction + implementations |
 | `catcode-middleware` | Middleware chain, circuit breaker, retry, model router |
 | `catcode-context` | Context engineering, token budget, compression |
-| `catcode-daemon` | Daemon process, session management, persistence |
+| `catcode-daemon` | Daemon process, session management, persistence, benchmark |
 | `catcode-tools` | Built-in tool implementations |
 | `catcode-sandbox` | Sandbox isolation and operation classification |
 | `catcode-api` | HTTP/WebSocket API for remote control |
-| `catcode-plugin` | Skill/Plugin/MCP extension system |
+| `catcode-plugin` | Skill/Plugin/MCP extension system + WASM sandbox |
 | `catcode-tui` | Terminal UI (ratatui) |
 
 ## Quick Start
@@ -62,11 +66,47 @@ cargo test --workspace
 cargo clippy --workspace
 ```
 
+## TUI Commands
+
+| Command | Description |
+|---------|-------------|
+| `/new <name>` | Create a new session |
+| `/sessions` | List all sessions |
+| `/switch <n\|name>` | Switch to session |
+| `/close` | Close current session |
+| `/clear` | Clear messages |
+| `/model <name>` | Set/view model |
+| `/usage` | Show token usage |
+| `/plan` | Enter plan mode (no tool execution) |
+| `/act` | Enter act mode (default, tools available) |
+| `/auto` | Plan first, then execute after approval |
+| `/goal <objective>` | Create autonomous goal |
+| `/goal status\|pause\|resume\|clear` | Manage goals |
+| `/benchmark list\|results\|clear` | Benchmark evaluation |
+| `/cat on\|off` | Toggle cat mascot |
+| `/quit` | Exit CatCode |
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Enter` | Send message |
+| `/` or `Tab` | Enter command mode |
+| `Ctrl+P` | Toggle plan/act mode |
+| `Ctrl+N` | New session |
+| `Ctrl+W` | Close session |
+| `Ctrl+K` | Clear messages |
+| `Ctrl+L` | Clear input |
+| `Ctrl+1-9` | Switch to session N |
+| `Ctrl+Left/Right` | Cycle sessions |
+| `PageUp/Down` | Scroll history |
+| `Home/End` | Scroll to top/bottom |
+
 ## Supported Providers
 
 | Provider | Models | Status |
 |----------|--------|--------|
-| Anthropic | Claude Sonnet 4, Claude Opus 4, Claude Haiku 4.5 | Implemented |
+| Anthropic | claude-sonnet-4, claude-opus-4, claude-haiku-4.5 | Implemented |
 | OpenAI | gpt-4.1, gpt-4.1-mini, gpt-4.1-nano, gpt-4o, o3, o3-mini, o4-mini | Implemented |
 | DeepSeek | deepseek-chat, deepseek-reasoner | Implemented |
 | Qwen (DashScope) | qwen3, qwen3-coder, qwen3-moe, qwen2.5 | Implemented |
