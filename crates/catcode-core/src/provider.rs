@@ -66,6 +66,7 @@ pub type ChatStream = std::pin::Pin<
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatStreamChunk {
     pub content: Option<String>,
+    pub thinking: Option<String>,
     pub tool_call_delta: Option<ToolCallDelta>,
     pub usage: Option<TokenUsage>,
     pub stop_reason: Option<crate::types::StopReason>,
@@ -99,6 +100,16 @@ pub trait Provider: Send + Sync {
         request: ChatRequest,
         ctx: &ProviderContext,
     ) -> Result<ChatResponse, ProviderError>;
+
+    async fn stream_chat(
+        &self,
+        request: ChatRequest,
+        ctx: &ProviderContext,
+    ) -> Result<ChatStream, ProviderError> {
+        Err(ProviderError::RequestFailed(
+            "Streaming not supported by this provider".to_string(),
+        ))
+    }
 
     async fn health_check(&self) -> Result<(), ProviderError>;
     fn token_counter(&self) -> Box<dyn TokenCounter>;

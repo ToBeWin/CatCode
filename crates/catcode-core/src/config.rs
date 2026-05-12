@@ -82,6 +82,8 @@ pub struct ContextConfig {
     pub compression_enabled: bool,
     pub compression_threshold_ratio: f32,
     pub dedup_tool_outputs: bool,
+    pub roll_history_enabled: bool,
+    pub filter_relevance_enabled: bool,
     pub max_file_content_tokens: u64,
 }
 
@@ -91,6 +93,8 @@ impl Default for ContextConfig {
             compression_enabled: true,
             compression_threshold_ratio: 0.75,
             dedup_tool_outputs: true,
+            roll_history_enabled: true,
+            filter_relevance_enabled: true,
             max_file_content_tokens: 8000,
         }
     }

@@ -3,6 +3,10 @@ name = "catcode-tui"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "catcode-tui"
+path = "src/main.rs"
+
 [dependencies]
 catcode-core = { path = "../catcode-core" }
 catcode-daemon = { path = "../catcode-daemon" }

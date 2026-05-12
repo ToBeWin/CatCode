@@ -1,62 +1,71 @@
 use async_trait::async_trait;
 use catcode_core::error::ProviderError;
 use catcode_core::provider::{
-    ChatStream, ChatStreamChunk, ModelInfo, ModelTier, Provider, ProviderCapabilities,
-    ProviderContext, TokenCounter, ToolCallDelta,
+    ModelInfo, ModelTier, Provider, ProviderCapabilities, ProviderContext, TokenCounter,
 };
 use catcode_core::types::{
     ChatRequest, ChatResponse, ContentBlock, Message, Role, StopReason, TokenUsage,
 };
 use serde::{Deserialize, Serialize};
 
+// === Volcengine model list ===
+
+pub const VOLCENGINE_MODELS: &[(&str, &str, f64, f64, u64, ModelTier)] = &[
+    ("doubao-1.5-pro-256k", "Doubao 1.5 Pro 256K", 0.8, 0.8, 256_000, ModelTier::Powerful),
+    ("doubao-1.5-pro-32k", "Doubao 1.5 Pro 32K", 0.35, 0.35, 32_000, ModelTier::Powerful),
+    ("doubao-1.5-lite-32k", "Doubao 1.5 Lite 32K", 0.1, 0.1, 128_000, ModelTier::Fast),
+    ("deepseek-r1-250120", "DeepSeek R1", 0.55, 2.19, 128_000, ModelTier::Powerful),
+    ("deepseek-v3-241226", "DeepSeek V3", 0.5, 0.5, 128_000, ModelTier::Balanced),
+];
+
 // === Request types (OpenAI-compatible) ===
 
 #[derive(Debug, Serialize)]
-struct DeepSeekRequest {
+struct VolcengineRequest {
     model: String,
-    messages: Vec<DeepSeekMessage>,
+    messages: Vec<VolcengineMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<DeepSeekTool>>,
+    tools: Option<Vec<VolcengineTool>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct DeepSeekMessage {
+struct VolcengineMessage {
     role: String,
     content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<DeepSeekToolCall>>,
+    tool_calls: Option<Vec<VolcengineToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct DeepSeekToolCall {
+struct VolcengineToolCall {
     id: String,
     #[serde(rename = "type")]
     call_type: String,
-    function: DeepSeekFunction,
+    function: VolcengineFunction,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct DeepSeekFunction {
+struct VolcengineFunction {
     name: String,
     arguments: String,
 }
 
 #[derive(Debug, Serialize)]
-struct DeepSeekTool {
+struct VolcengineTool {
     #[serde(rename = "type")]
     tool_type: String,
-    function: DeepSeekFunctionDef,
+    function: VolcengineFunctionDef,
 }
 
 #[derive(Debug, Serialize)]
-struct DeepSeekFunctionDef {
+struct VolcengineFunctionDef {
     name: String,
     description: String,
     parameters: serde_json::Value,
@@ -65,93 +74,61 @@ struct DeepSeekFunctionDef {
 // === Response types ===
 
 #[derive(Debug, Deserialize)]
-struct DeepSeekResponse {
+struct VolcengineResponse {
     #[allow(dead_code)]
     id: String,
     #[allow(dead_code)]
     model: String,
-    choices: Vec<DeepSeekChoice>,
-    usage: DeepSeekUsage,
+    choices: Vec<VolcengineChoice>,
+    usage: VolcengineUsage,
 }
 
 #[derive(Debug, Deserialize)]
-struct DeepSeekChoice {
+struct VolcengineChoice {
     #[allow(dead_code)]
     index: usize,
-    message: DeepSeekResponseMessage,
+    message: VolcengineResponseMessage,
     finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct DeepSeekResponseMessage {
+struct VolcengineResponseMessage {
     #[allow(dead_code)]
     role: String,
     content: Option<String>,
-    reasoning_content: Option<String>,
-    tool_calls: Option<Vec<DeepSeekResponseToolCall>>,
+    tool_calls: Option<Vec<VolcengineResponseToolCall>>,
 }
 
 #[derive(Debug, Deserialize)]
-struct DeepSeekResponseToolCall {
+struct VolcengineResponseToolCall {
     id: String,
     #[serde(rename = "type")]
     #[allow(dead_code)]
     call_type: Option<String>,
-    function: DeepSeekResponseFunction,
+    function: VolcengineResponseFunction,
 }
 
 #[derive(Debug, Deserialize)]
-struct DeepSeekResponseFunction {
+struct VolcengineResponseFunction {
     name: String,
     arguments: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct DeepSeekUsage {
+struct VolcengineUsage {
     prompt_tokens: u64,
     completion_tokens: u64,
     #[allow(dead_code)]
     total_tokens: Option<u64>,
-    #[serde(default)]
-    prompt_cache_hit_tokens: Option<u64>,
-    #[serde(default)]
-    prompt_cache_miss_tokens: Option<u64>,
-}
-
-// === Streaming response types ===
-
-#[derive(Debug, Deserialize)]
-struct StreamChunk {
-    choices: Option<Vec<StreamChoice>>,
-    usage: Option<DeepSeekUsage>,
-}
-
-#[derive(Debug, Deserialize)]
-struct StreamChoice {
-    delta: StreamDelta,
-    #[allow(dead_code)]
-    index: usize,
-    finish_reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct StreamDelta {
-    content: Option<String>,
-    reasoning_content: Option<String>,
-    #[allow(dead_code)]
-    role: Option<String>,
-    tool_calls: Option<Vec<DeepSeekResponseToolCall>>,
 }
 
 // === Conversion functions ===
 
-/// Convert a catcode-core ChatRequest into a DeepSeek API request.
-fn convert_request(req: &ChatRequest) -> Result<DeepSeekRequest, ProviderError> {
-    let mut messages: Vec<DeepSeekMessage> = Vec::new();
+fn convert_request(req: &ChatRequest) -> Result<VolcengineRequest, ProviderError> {
+    let mut messages: Vec<VolcengineMessage> = Vec::new();
 
-    // If there's a system prompt, add it as a system message first.
     if let Some(ref system) = req.system {
-        messages.push(DeepSeekMessage {
+        messages.push(VolcengineMessage {
             role: "system".to_string(),
             content: Some(system.clone()),
             tool_calls: None,
@@ -166,9 +143,9 @@ fn convert_request(req: &ChatRequest) -> Result<DeepSeekRequest, ProviderError> 
     let tools = req.tools.as_ref().map(|tools| {
         tools
             .iter()
-            .map(|t| DeepSeekTool {
+            .map(|t| VolcengineTool {
                 tool_type: "function".to_string(),
-                function: DeepSeekFunctionDef {
+                function: VolcengineFunctionDef {
                     name: t.name.clone(),
                     description: t.description.clone(),
                     parameters: t.parameters.clone(),
@@ -177,7 +154,7 @@ fn convert_request(req: &ChatRequest) -> Result<DeepSeekRequest, ProviderError> 
             .collect()
     });
 
-    Ok(DeepSeekRequest {
+    Ok(VolcengineRequest {
         model: req.model.clone(),
         messages,
         max_tokens: req.max_tokens,
@@ -187,7 +164,7 @@ fn convert_request(req: &ChatRequest) -> Result<DeepSeekRequest, ProviderError> 
     })
 }
 
-fn convert_message(msg: &Message) -> Result<DeepSeekMessage, ProviderError> {
+fn convert_message(msg: &Message) -> Result<VolcengineMessage, ProviderError> {
     let role = match msg.role {
         Role::System => "system",
         Role::User => "user",
@@ -198,10 +175,10 @@ fn convert_message(msg: &Message) -> Result<DeepSeekMessage, ProviderError> {
     let tool_calls = msg.tool_calls.as_ref().map(|calls| {
         calls
             .iter()
-            .map(|tc| DeepSeekToolCall {
+            .map(|tc| VolcengineToolCall {
                 id: tc.id.clone(),
                 call_type: "function".to_string(),
-                function: DeepSeekFunction {
+                function: VolcengineFunction {
                     name: tc.name.clone(),
                     arguments: serde_json::to_string(&tc.args).unwrap_or_default(),
                 },
@@ -209,20 +186,15 @@ fn convert_message(msg: &Message) -> Result<DeepSeekMessage, ProviderError> {
             .collect()
     });
 
-    Ok(DeepSeekMessage {
+    Ok(VolcengineMessage {
         role: role.to_string(),
-        content: if msg.content.is_empty() {
-            None
-        } else {
-            Some(msg.content.clone())
-        },
+        content: if msg.content.is_empty() { None } else { Some(msg.content.clone()) },
         tool_calls,
         tool_call_id: msg.tool_call_id.clone(),
     })
 }
 
-/// Convert a DeepSeek API response into a catcode-core ChatResponse.
-fn convert_response(resp: DeepSeekResponse, model: &str) -> Result<ChatResponse, ProviderError> {
+fn convert_response(resp: VolcengineResponse, model: &str) -> Result<ChatResponse, ProviderError> {
     let choice = resp
         .choices
         .into_iter()
@@ -230,14 +202,6 @@ fn convert_response(resp: DeepSeekResponse, model: &str) -> Result<ChatResponse,
         .ok_or_else(|| ProviderError::RequestFailed("No choices in response".to_string()))?;
 
     let mut content = Vec::new();
-
-    if let Some(ref reasoning) = choice.message.reasoning_content
-        && !reasoning.is_empty()
-    {
-        content.push(ContentBlock::Thinking {
-            text: reasoning.clone(),
-        });
-    }
 
     if let Some(text) = choice.message.content
         && !text.is_empty()
@@ -264,32 +228,28 @@ fn convert_response(resp: DeepSeekResponse, model: &str) -> Result<ChatResponse,
         _ => StopReason::EndTurn,
     };
 
-    let cache_read = resp.usage.prompt_cache_hit_tokens.unwrap_or(0);
-    let cache_creation = resp.usage.prompt_cache_miss_tokens.unwrap_or(0);
-
     Ok(ChatResponse {
         content,
         usage: TokenUsage {
             input_tokens: resp.usage.prompt_tokens,
             output_tokens: resp.usage.completion_tokens,
-            cache_read_tokens: cache_read,
-            cache_creation_tokens: cache_creation,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
         },
         stop_reason,
         model: model.to_string(),
     })
 }
 
-// === DeepSeek Provider ===
+// === Volcengine Provider ===
 
-/// DeepSeek provider implementation using the OpenAI-compatible API.
-pub struct DeepSeekProvider {
+pub struct VolcengineProvider {
     api_key: String,
     base_url: String,
     client: reqwest::Client,
 }
 
-impl DeepSeekProvider {
+impl VolcengineProvider {
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,
@@ -298,18 +258,15 @@ impl DeepSeekProvider {
         }
     }
 
-    /// Build the full API URL for chat completions.
     fn chat_url(&self) -> String {
         format!("{}/chat/completions", self.base_url)
     }
 }
 
-/// A simple tokenizer that estimates ~4 chars per token for DeepSeek.
-pub struct DeepSeekTokenCounter;
+pub struct VolcengineTokenCounter;
 
-impl TokenCounter for DeepSeekTokenCounter {
+impl TokenCounter for VolcengineTokenCounter {
     fn count_text(&self, text: &str) -> usize {
-        // Rough estimate: ~4 characters per token
         text.len().div_ceil(4)
     }
 
@@ -322,42 +279,35 @@ impl TokenCounter for DeepSeekTokenCounter {
 }
 
 #[async_trait]
-impl Provider for DeepSeekProvider {
+impl Provider for VolcengineProvider {
     fn id(&self) -> &str {
-        "deepseek"
+        "volcengine"
     }
 
     fn display_name(&self) -> &str {
-        "DeepSeek"
+        "Volcengine"
     }
 
     fn supported_models(&self) -> Vec<ModelInfo> {
-        vec![
-            ModelInfo {
-                id: "deepseek-chat".to_string(),
-                display_name: "DeepSeek Chat".to_string(),
-                input_price_per_mtok: 0.14,
-                output_price_per_mtok: 0.28,
-                context_window: 64_000,
-                tier: ModelTier::Balanced,
-            },
-            ModelInfo {
-                id: "deepseek-reasoner".to_string(),
-                display_name: "DeepSeek Reasoner".to_string(),
-                input_price_per_mtok: 0.55,
-                output_price_per_mtok: 2.19,
-                context_window: 64_000,
-                tier: ModelTier::Powerful,
-            },
-        ]
+        VOLCENGINE_MODELS
+            .iter()
+            .map(|(id, name, input_price, output_price, ctx, tier)| ModelInfo {
+                id: id.to_string(),
+                display_name: name.to_string(),
+                input_price_per_mtok: *input_price,
+                output_price_per_mtok: *output_price,
+                context_window: *ctx,
+                tier: *tier,
+            })
+            .collect()
     }
 
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             supports_tool_call: true,
             supports_vision: false,
-            supports_prompt_cache: true,
-            max_context_tokens: 64_000,
+            supports_prompt_cache: false,
+            max_context_tokens: 256_000,
             supports_streaming: true,
         }
     }
@@ -367,7 +317,7 @@ impl Provider for DeepSeekProvider {
         request: ChatRequest,
         _ctx: &ProviderContext,
     ) -> Result<ChatResponse, ProviderError> {
-        let ds_req = convert_request(&request)?;
+        let vc_req = convert_request(&request)?;
         let url = self.chat_url();
 
         let resp = self
@@ -375,7 +325,7 @@ impl Provider for DeepSeekProvider {
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
-            .json(&ds_req)
+            .json(&vc_req)
             .send()
             .await
             .map_err(|e| ProviderError::RequestFailed(format!("HTTP request failed: {e}")))?;
@@ -400,16 +350,15 @@ impl Provider for DeepSeekProvider {
             };
         }
 
-        let ds_resp: DeepSeekResponse = resp
+        let vc_resp: VolcengineResponse = resp
             .json()
             .await
             .map_err(|e| ProviderError::RequestFailed(format!("Failed to parse response: {e}")))?;
 
-        convert_response(ds_resp, &request.model)
+        convert_response(vc_resp, &request.model)
     }
 
     async fn health_check(&self) -> Result<(), ProviderError> {
-        // A lightweight check: just verify we can reach the server
         let url = format!("{}/models", self.base_url);
         let resp = self
             .client
@@ -430,130 +379,7 @@ impl Provider for DeepSeekProvider {
     }
 
     fn token_counter(&self) -> Box<dyn TokenCounter> {
-        Box::new(DeepSeekTokenCounter)
-    }
-}
-
-/// Convert a streaming SSE chunk into a ChatStreamChunk.
-fn convert_stream_chunk(chunk: StreamChunk) -> Option<ChatStreamChunk> {
-    use catcode_core::types::StopReason;
-
-    let choice = chunk.choices?.into_iter().next()?;
-
-    let tool_call_delta = choice.delta.tool_calls.and_then(|calls| {
-        calls.into_iter().next().map(|tc| ToolCallDelta {
-            id: Some(tc.id),
-            name: Some(tc.function.name),
-            args_delta: Some(tc.function.arguments),
-        })
-    });
-
-    let stop_reason = choice.finish_reason.as_deref().and_then(|r| match r {
-        "stop" => Some(StopReason::EndTurn),
-        "length" => Some(StopReason::MaxTokens),
-        "tool_calls" => Some(StopReason::ToolUse),
-        _ => None,
-    });
-
-    Some(ChatStreamChunk {
-        content: choice.delta.content.filter(|c| !c.is_empty()),
-        thinking: choice.delta.reasoning_content.filter(|c| !c.is_empty()),
-        tool_call_delta,
-        usage: chunk.usage.map(|u| TokenUsage {
-            input_tokens: u.prompt_tokens,
-            output_tokens: u.completion_tokens,
-            cache_read_tokens: u.prompt_cache_hit_tokens.unwrap_or(0),
-            cache_creation_tokens: u.prompt_cache_miss_tokens.unwrap_or(0),
-        }),
-        stop_reason,
-    })
-}
-
-impl DeepSeekProvider {
-    /// Stream a chat completion, yielding chunks as they arrive from the API.
-    pub async fn stream_chat(
-        &self,
-        request: ChatRequest,
-        _ctx: &ProviderContext,
-    ) -> Result<ChatStream, ProviderError> {
-        let ds_req = convert_request(&request)?;
-        let url = self.chat_url();
-        let client = self.client.clone();
-        let api_key = self.api_key.clone();
-
-        let resp = client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Content-Type", "application/json")
-            .json(&ds_req)
-            .send()
-            .await
-            .map_err(|e| ProviderError::RequestFailed(format!("HTTP request failed: {e}")))?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp
-                .text()
-                .await
-                .unwrap_or_else(|_| "failed to read error body".to_string());
-            return match status.as_u16() {
-                401 => Err(ProviderError::AuthFailed(body)),
-                429 => Err(ProviderError::RateLimited {
-                    retry_after_ms: 1000,
-                }),
-                500..=599 => Err(ProviderError::Unavailable(format!(
-                    "Server error {status}: {body}"
-                ))),
-                _ => Err(ProviderError::RequestFailed(format!(
-                    "HTTP {status}: {body}"
-                ))),
-            };
-        }
-
-        let (tx, rx) = futures::channel::mpsc::unbounded();
-
-        tokio::spawn(async move {
-            use futures::StreamExt;
-
-            let mut byte_stream = resp.bytes_stream();
-            let mut buffer: Vec<u8> = Vec::new();
-
-            while let Some(chunk_result) = byte_stream.next().await {
-                let chunk = match chunk_result {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.unbounded_send(Err(ProviderError::RequestFailed(
-                            format!("Stream error: {e}"),
-                        )));
-                        return;
-                    }
-                };
-
-                for &byte in &chunk {
-                    if byte == b'\n' {
-                            if buffer.starts_with(b"data: ") {
-                            let data = &buffer[6..];
-                            let data_str = std::str::from_utf8(data).unwrap_or("");
-                            if data_str.trim() == "[DONE]" {
-                                return;
-                            }
-                            if let Ok(sse_chunk) =
-                                serde_json::from_slice::<StreamChunk>(data)
-                            {
-                                if let Some(chat_chunk) = convert_stream_chunk(sse_chunk) {
-                                    let _ = tx.unbounded_send(Ok(chat_chunk));
-                                }
-                            }
-                        }
-                        buffer.clear();
-                    } else if byte != b'\r' {
-                        buffer.push(byte);
-                    }
-                }
-            }
-        });
-
-        Ok(Box::pin(rx))
+        Box::new(VolcengineTokenCounter)
     }
 }
 
@@ -566,9 +392,9 @@ mod tests {
 
     #[test]
     fn test_serialize_request_basic() {
-        let req = DeepSeekRequest {
-            model: "deepseek-chat".to_string(),
-            messages: vec![DeepSeekMessage {
+        let req = VolcengineRequest {
+            model: "doubao-1.5-pro-32k".to_string(),
+            messages: vec![VolcengineMessage {
                 role: "user".to_string(),
                 content: Some("Hello".to_string()),
                 tool_calls: None,
@@ -581,26 +407,25 @@ mod tests {
         };
 
         let json = serde_json::to_value(&req).unwrap();
-        assert_eq!(json["model"], "deepseek-chat");
+        assert_eq!(json["model"], "doubao-1.5-pro-32k");
         assert_eq!(json["messages"][0]["role"], "user");
         assert_eq!(json["messages"][0]["content"], "Hello");
         assert_eq!(json["max_tokens"], 4096);
         assert_eq!(json["stream"], false);
-        // tools should be absent when None
         assert!(json.get("tools").is_none());
     }
 
     #[test]
     fn test_serialize_request_with_tools() {
-        let req = DeepSeekRequest {
-            model: "deepseek-chat".to_string(),
+        let req = VolcengineRequest {
+            model: "doubao-1.5-pro-32k".to_string(),
             messages: vec![],
             max_tokens: None,
             temperature: None,
             stream: false,
-            tools: Some(vec![DeepSeekTool {
+            tools: Some(vec![VolcengineTool {
                 tool_type: "function".to_string(),
-                function: DeepSeekFunctionDef {
+                function: VolcengineFunctionDef {
                     name: "read_file".to_string(),
                     description: "Read a file".to_string(),
                     parameters: serde_json::json!({
@@ -620,13 +445,13 @@ mod tests {
 
     #[test]
     fn test_serialize_tool_call_message() {
-        let msg = DeepSeekMessage {
+        let msg = VolcengineMessage {
             role: "assistant".to_string(),
             content: None,
-            tool_calls: Some(vec![DeepSeekToolCall {
+            tool_calls: Some(vec![VolcengineToolCall {
                 id: "call_123".to_string(),
                 call_type: "function".to_string(),
-                function: DeepSeekFunction {
+                function: VolcengineFunction {
                     name: "read_file".to_string(),
                     arguments: r#"{"path":"src/main.rs"}"#.to_string(),
                 },
@@ -642,7 +467,7 @@ mod tests {
 
     #[test]
     fn test_serialize_tool_result_message() {
-        let msg = DeepSeekMessage {
+        let msg = VolcengineMessage {
             role: "tool".to_string(),
             content: Some("file contents here".to_string()),
             tool_calls: None,
@@ -662,7 +487,7 @@ mod tests {
         let json = serde_json::json!({
             "id": "chatcmpl-123",
             "object": "chat.completion",
-            "model": "deepseek-chat",
+            "model": "doubao-1.5-pro-32k",
             "choices": [{
                 "index": 0,
                 "message": {
@@ -678,7 +503,7 @@ mod tests {
             }
         });
 
-        let resp: DeepSeekResponse = serde_json::from_value(json).unwrap();
+        let resp: VolcengineResponse = serde_json::from_value(json).unwrap();
         assert_eq!(resp.choices.len(), 1);
         assert_eq!(
             resp.choices[0].message.content.as_deref(),
@@ -694,7 +519,7 @@ mod tests {
         let json = serde_json::json!({
             "id": "chatcmpl-456",
             "object": "chat.completion",
-            "model": "deepseek-chat",
+            "model": "doubao-1.5-pro-32k",
             "choices": [{
                 "index": 0,
                 "message": {
@@ -718,7 +543,7 @@ mod tests {
             }
         });
 
-        let resp: DeepSeekResponse = serde_json::from_value(json).unwrap();
+        let resp: VolcengineResponse = serde_json::from_value(json).unwrap();
         let msg = &resp.choices[0].message;
         assert!(msg.tool_calls.is_some());
         let calls = msg.tool_calls.as_ref().unwrap();
@@ -730,9 +555,9 @@ mod tests {
     // === Conversion tests ===
 
     #[test]
-    fn test_convert_chat_request_to_deepseek() {
+    fn test_convert_chat_request_to_volcengine() {
         let req = ChatRequest {
-            model: "deepseek-chat".to_string(),
+            model: "doubao-1.5-pro-32k".to_string(),
             messages: vec![
                 Message::system("You are helpful"),
                 Message::user("Hello"),
@@ -764,25 +589,25 @@ mod tests {
             stream: false,
         };
 
-        let ds_req = convert_request(&req).unwrap();
-        assert_eq!(ds_req.model, "deepseek-chat");
-        assert_eq!(ds_req.messages.len(), 6);
-        assert_eq!(ds_req.messages[0].role, "system");
-        assert_eq!(ds_req.messages[1].role, "user");
-        assert_eq!(ds_req.messages[2].role, "assistant");
-        assert_eq!(ds_req.messages[3].role, "user");
-        assert_eq!(ds_req.messages[4].role, "assistant");
-        assert!(ds_req.messages[4].tool_calls.is_some());
-        assert_eq!(ds_req.messages[5].role, "tool");
-        assert_eq!(ds_req.messages[5].tool_call_id.as_deref(), Some("call_1"));
-        assert!(ds_req.tools.is_some());
-        assert_eq!(ds_req.tools.as_ref().unwrap().len(), 1);
+        let vc_req = convert_request(&req).unwrap();
+        assert_eq!(vc_req.model, "doubao-1.5-pro-32k");
+        assert_eq!(vc_req.messages.len(), 6);
+        assert_eq!(vc_req.messages[0].role, "system");
+        assert_eq!(vc_req.messages[1].role, "user");
+        assert_eq!(vc_req.messages[2].role, "assistant");
+        assert_eq!(vc_req.messages[3].role, "user");
+        assert_eq!(vc_req.messages[4].role, "assistant");
+        assert!(vc_req.messages[4].tool_calls.is_some());
+        assert_eq!(vc_req.messages[5].role, "tool");
+        assert_eq!(vc_req.messages[5].tool_call_id.as_deref(), Some("call_1"));
+        assert!(vc_req.tools.is_some());
+        assert_eq!(vc_req.tools.as_ref().unwrap().len(), 1);
     }
 
     #[test]
     fn test_convert_request_with_system_field() {
         let req = ChatRequest {
-            model: "deepseek-chat".to_string(),
+            model: "doubao-1.5-pro-32k".to_string(),
             messages: vec![Message::user("Hello")],
             tools: None,
             system: Some("You are a helpful assistant".to_string()),
@@ -791,41 +616,38 @@ mod tests {
             stream: false,
         };
 
-        let ds_req = convert_request(&req).unwrap();
-        assert_eq!(ds_req.messages.len(), 2);
-        assert_eq!(ds_req.messages[0].role, "system");
+        let vc_req = convert_request(&req).unwrap();
+        assert_eq!(vc_req.messages.len(), 2);
+        assert_eq!(vc_req.messages[0].role, "system");
         assert_eq!(
-            ds_req.messages[0].content.as_deref(),
+            vc_req.messages[0].content.as_deref(),
             Some("You are a helpful assistant")
         );
-        assert_eq!(ds_req.messages[1].role, "user");
+        assert_eq!(vc_req.messages[1].role, "user");
     }
 
     #[test]
     fn test_convert_response_to_chat_response() {
-        let ds_resp = DeepSeekResponse {
+        let vc_resp = VolcengineResponse {
             id: "chatcmpl-123".to_string(),
-            model: "deepseek-chat".to_string(),
-            choices: vec![DeepSeekChoice {
+            model: "doubao-1.5-pro-32k".to_string(),
+            choices: vec![VolcengineChoice {
                 index: 0,
-                message: DeepSeekResponseMessage {
+                message: VolcengineResponseMessage {
                     role: "assistant".to_string(),
                     content: Some("Hello!".to_string()),
-                    reasoning_content: None,
                     tool_calls: None,
                 },
                 finish_reason: Some("stop".to_string()),
             }],
-            usage: DeepSeekUsage {
+            usage: VolcengineUsage {
                 prompt_tokens: 10,
                 completion_tokens: 5,
                 total_tokens: Some(15),
-                prompt_cache_hit_tokens: Some(0),
-                prompt_cache_miss_tokens: Some(10),
             },
         };
 
-        let resp = convert_response(ds_resp, "deepseek-chat").unwrap();
+        let resp = convert_response(vc_resp, "doubao-1.5-pro-32k").unwrap();
         assert_eq!(resp.content.len(), 1);
         assert_eq!(resp.text_content(), "Hello!");
         assert_eq!(resp.stop_reason, StopReason::EndTurn);
@@ -835,19 +657,18 @@ mod tests {
 
     #[test]
     fn test_convert_response_with_tool_calls() {
-        let ds_resp = DeepSeekResponse {
+        let vc_resp = VolcengineResponse {
             id: "chatcmpl-456".to_string(),
-            model: "deepseek-chat".to_string(),
-            choices: vec![DeepSeekChoice {
+            model: "doubao-1.5-pro-32k".to_string(),
+            choices: vec![VolcengineChoice {
                 index: 0,
-                message: DeepSeekResponseMessage {
+                message: VolcengineResponseMessage {
                     role: "assistant".to_string(),
                     content: None,
-                    reasoning_content: None,
-                    tool_calls: Some(vec![DeepSeekResponseToolCall {
+                    tool_calls: Some(vec![VolcengineResponseToolCall {
                         id: "call_abc".to_string(),
                         call_type: Some("function".to_string()),
-                        function: DeepSeekResponseFunction {
+                        function: VolcengineResponseFunction {
                             name: "read_file".to_string(),
                             arguments: r#"{"path":"src/main.rs"}"#.to_string(),
                         },
@@ -855,16 +676,14 @@ mod tests {
                 },
                 finish_reason: Some("tool_calls".to_string()),
             }],
-            usage: DeepSeekUsage {
+            usage: VolcengineUsage {
                 prompt_tokens: 20,
                 completion_tokens: 15,
                 total_tokens: Some(35),
-                prompt_cache_hit_tokens: None,
-                prompt_cache_miss_tokens: None,
             },
         };
 
-        let resp = convert_response(ds_resp, "deepseek-chat").unwrap();
+        let resp = convert_response(vc_resp, "doubao-1.5-pro-32k").unwrap();
         assert!(resp.has_tool_calls());
         assert_eq!(resp.stop_reason, StopReason::ToolUse);
         let tc = match &resp.content[0] {
@@ -881,27 +700,58 @@ mod tests {
 
     // === Provider metadata tests ===
 
-    fn create_test_provider() -> DeepSeekProvider {
-        DeepSeekProvider::new(
+    fn create_test_provider() -> VolcengineProvider {
+        VolcengineProvider::new(
             "test-key".to_string(),
-            "https://api.deepseek.com".to_string(),
+            "https://ark.cn-beijing.volces.com/api/v3".to_string(),
         )
     }
 
     #[test]
-    fn test_deepseek_provider_metadata() {
+    fn test_volcengine_provider_metadata() {
         let provider = create_test_provider();
-        assert_eq!(provider.id(), "deepseek");
-        assert_eq!(provider.display_name(), "DeepSeek");
-        assert!(!provider.supported_models().is_empty());
+        assert_eq!(provider.id(), "volcengine");
+        assert_eq!(provider.display_name(), "Volcengine");
+        assert_eq!(provider.supported_models().len(), 5);
     }
 
     #[test]
-    fn test_deepseek_capabilities() {
+    fn test_volcengine_capabilities() {
         let provider = create_test_provider();
         let caps = provider.capabilities();
         assert!(caps.supports_tool_call);
         assert!(caps.supports_streaming);
-        assert!(caps.max_context_tokens > 0);
+        assert_eq!(caps.max_context_tokens, 256_000);
+    }
+
+    #[test]
+    fn test_chat_url() {
+        let provider = create_test_provider();
+        assert_eq!(
+            provider.chat_url(),
+            "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_token_counter() {
+        let counter = VolcengineTokenCounter;
+        assert_eq!(counter.count_text("hello"), 2);
+        assert_eq!(counter.count_text("x".repeat(100).as_str()), 25);
+    }
+
+    #[test]
+    fn test_volcengine_models_have_tiers() {
+        let provider = create_test_provider();
+        let models = provider.supported_models();
+
+        let doubao_pro = models.iter().find(|m| m.id == "doubao-1.5-pro-32k").unwrap();
+        assert_eq!(doubao_pro.tier, ModelTier::Powerful);
+
+        let lite = models.iter().find(|m| m.id == "doubao-1.5-lite-32k").unwrap();
+        assert_eq!(lite.tier, ModelTier::Fast);
+
+        let ds_v3 = models.iter().find(|m| m.id == "deepseek-v3-241226").unwrap();
+        assert_eq!(ds_v3.tier, ModelTier::Balanced);
     }
 }

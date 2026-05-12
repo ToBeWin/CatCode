@@ -1,0 +1,25 @@
+[skill]
+name = "rust"
+version = "1.0.0"
+description = "Rust project development skill"
+
+[rules]
+always_run = ["cargo check", "cargo clippy"]
+prefer_tools = ["code_analysis", "patch_file"]
+avoid_tools = []
+
+[prompts]
+system_suffix = """
+You are working on a Rust project. Follow these rules:
+- Use anyhow::Result for error handling
+- Prefer patch_file over write_file for edits
+- Always run cargo check after modifying code
+"""
+
+[context]
+always_include_files = ["Cargo.toml", "src/lib.rs"]
+ignore_patterns = ["target/", "*.lock"]
+
+[hooks]
+before_commit = "cargo test"
+after_write = "cargo fmt"

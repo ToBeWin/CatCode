@@ -200,18 +200,58 @@ fn render_top_bar(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(paragraph, area);
 }
 
-/// Render the main content area with sessions list and messages.
+/// Render the main content area with sessions list, thinking panel, and messages.
 fn render_main_area(f: &mut Frame, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(20), // Sessions panel
-            Constraint::Min(40),    // Messages
-        ])
-        .split(area);
+    if app.has_thinking() {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(20),  // Sessions panel
+                Constraint::Percentage(30), // Thinking panel
+                Constraint::Min(40),     // Messages
+            ])
+            .split(area);
 
-    render_sessions_panel(f, app, chunks[0]);
-    render_messages(f, app, chunks[1]);
+        render_sessions_panel(f, app, chunks[0]);
+        render_thinking_panel(f, app, chunks[1]);
+        render_messages(f, app, chunks[2]);
+    } else {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(20), // Sessions panel
+                Constraint::Min(40),    // Messages
+            ])
+            .split(area);
+
+        render_sessions_panel(f, app, chunks[0]);
+        render_messages(f, app, chunks[1]);
+    }
+}
+
+/// Render the thinking panel showing real-time reasoning content.
+fn render_thinking_panel(f: &mut Frame, app: &App, area: Rect) {
+    let text = if app.current_thinking.is_empty() {
+        " Waiting for thinking...".to_string()
+    } else {
+        app.current_thinking.clone()
+    };
+
+    let paragraph = Paragraph::new(text)
+        .style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::ITALIC),
+        )
+        .block(
+            Block::default()
+                .title(" Thinking... ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow)),
+        )
+        .wrap(Wrap { trim: false });
+
+    f.render_widget(paragraph, area);
 }
 
 /// Render the sessions list panel.
@@ -303,10 +343,23 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
                 ),
             };
 
-            // Split content into lines
-            let content_lines: Vec<&str> = msg.content.lines().collect();
             let mut result = Vec::new();
 
+            // Show thinking content if present (before the message)
+            if let Some(ref thinking) = msg.thinking {
+                for line in thinking.lines() {
+                    result.push(Line::from(Span::styled(
+                        format!("  {}", line),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::ITALIC),
+                    )));
+                }
+                result.push(Line::from(Span::raw("")));
+            }
+
+            // Split content into lines
+            let content_lines: Vec<&str> = msg.content.lines().collect();
             for (i, line) in content_lines.iter().enumerate() {
                 if i == 0 {
                     result.push(Line::from(vec![

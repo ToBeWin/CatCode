@@ -6,7 +6,9 @@ pub mod minimax;
 pub mod mock;
 pub mod ollama;
 pub mod openai;
+pub mod openrouter;
 pub mod qwen;
+pub mod volcengine;
 
 pub use catcode_core::provider::*;
 

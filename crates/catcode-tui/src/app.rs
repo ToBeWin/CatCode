@@ -11,6 +11,8 @@ use tokio::sync::mpsc;
 pub enum AgentEvent {
     /// Agent produced text output.
     AgentMessage(String),
+    /// Real-time thinking content delta.
+    Thinking(String),
     /// Agent is calling a tool.
     ToolCall { tool: String, args: String },
     /// Tool execution completed.
@@ -128,6 +130,7 @@ impl AgentMode {
 pub struct ChatMessage {
     pub role: MessageRole,
     pub content: String,
+    pub thinking: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -188,6 +191,8 @@ pub struct App {
     pub history_index: Option<usize>,
     /// Saved input when navigating history.
     pub history_saved_input: String,
+    /// Real-time thinking content from the current agent response.
+    pub current_thinking: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -225,6 +230,7 @@ impl App {
             input_history: Vec::new(),
             history_index: None,
             history_saved_input: String::new(),
+            current_thinking: String::new(),
         }
     }
 
@@ -259,6 +265,7 @@ impl App {
         self.messages.push(ChatMessage {
             role,
             content: content.into(),
+            thinking: None,
         });
         // Auto-scroll to bottom
         self.scroll_to_bottom();
@@ -857,6 +864,11 @@ impl App {
         }
     }
 
+    /// Check if there is active thinking content to display.
+    pub fn has_thinking(&self) -> bool {
+        !self.current_thinking.is_empty()
+    }
+
     // === Benchmark ===
 
     /// Add a benchmark report.
@@ -905,8 +917,16 @@ impl App {
 
             // Spawn a background task to simulate agent processing
             tokio::spawn(async move {
-                // Simulate thinking time
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                // Simulate thinking time with real-time updates
+                for chunk in [
+                    "Let me analyze your request...\n",
+                    "First, I'll check what tools are available.\n",
+                    "I see you've asked about the codebase.\n",
+                    "Let me formulate a response for you.\n",
+                ] {
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    let _ = tx.send(AgentEvent::Thinking(chunk.to_string()));
+                }
 
                 // Simulate tool call
                 let _ = tx.send(AgentEvent::ToolCall {
@@ -940,8 +960,23 @@ impl App {
         for event in events {
             match event {
                 AgentEvent::AgentMessage(msg) => {
-                    self.add_message(MessageRole::Assistant, &msg);
+                    let thinking = if self.current_thinking.is_empty() {
+                        None
+                    } else {
+                        Some(self.current_thinking.clone())
+                    };
+                    self.messages.push(ChatMessage {
+                        role: MessageRole::Assistant,
+                        content: msg,
+                        thinking,
+                    });
+                    self.current_thinking.clear();
+                    self.scroll_to_bottom();
                     self.set_cat_state(CatState::Done);
+                }
+                AgentEvent::Thinking(text) => {
+                    self.current_thinking.push_str(&text);
+                    self.set_cat_state(CatState::Thinking);
                 }
                 AgentEvent::ToolCall { tool, args } => {
                     self.add_message(

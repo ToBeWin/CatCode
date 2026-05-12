@@ -79,7 +79,7 @@ impl ToolRegistry {
         Ok(tool.execute(args, ctx).await)
     }
 
-    /// Create a registry pre-populated with all 6 built-in tools.
+    /// Create a registry pre-populated with all built-in tools.
     pub fn with_builtins() -> Self {
         let mut reg = Self::new();
         reg.register(Arc::new(crate::ReadFileTool));
@@ -88,6 +88,13 @@ impl ToolRegistry {
         reg.register(Arc::new(crate::SearchFilesTool::new()));
         reg.register(Arc::new(crate::GlobTool));
         reg.register(Arc::new(crate::ListDirTool));
+        reg.register(Arc::new(crate::PatchFileTool));
+        reg.register(Arc::new(crate::GitStatusTool));
+        reg.register(Arc::new(crate::GitDiffTool));
+        reg.register(Arc::new(crate::GitCommitTool));
+        reg.register(Arc::new(crate::DeleteFileTool));
+        reg.register(Arc::new(crate::WebFetchTool));
+        reg.register(Arc::new(crate::CodeAnalysisTool));
         reg
     }
 }

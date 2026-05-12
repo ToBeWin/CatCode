@@ -355,7 +355,7 @@ mod tests {
     fn test_build_tool_definitions() {
         let agent = make_loop("test");
         let defs = agent.build_tool_definitions();
-        assert_eq!(defs.len(), 6); // 6 built-in tools
+        assert_eq!(defs.len(), 13); // 13 built-in tools
         assert!(defs.iter().any(|d| d.name == "read_file"));
         assert!(defs.iter().any(|d| d.name == "bash"));
     }

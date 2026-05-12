@@ -53,6 +53,8 @@ impl ContextCompressor {
     /// 1. Deduplicates tool outputs (latest per tool name)
     /// 2. Truncates outputs exceeding `max_tool_output_chars`
     /// 3. Prunes old outputs, keeping only `keep_recent_turns` entries
+    /// 4. Rolls session history when working layer is bloated
+    /// 5. Filters tool outputs by relevance to current focus
     pub fn compress(&self, stack: &mut ContextStack) {
         // Step 1: Dedup tool outputs
         if stack.config.dedup_tool_outputs {
@@ -64,6 +66,22 @@ impl ContextCompressor {
 
         // Step 3: Keep only recent N entries
         self.prune_old_outputs(stack);
+
+        // Step 4: Roll session history if enabled and working layer is bloated
+        if stack.config.roll_history_enabled {
+            let threshold = self.keep_recent_turns * 2;
+            if stack.working.recent_tool_outputs.len() > threshold {
+                self.roll_session_history(stack);
+            }
+        }
+
+        // Step 5: Filter by relevance if enabled (uses current_files as focus)
+        if stack.config.filter_relevance_enabled {
+            let current_focus: Vec<String> = stack.working.current_files.clone();
+            if !current_focus.is_empty() {
+                self.filter_by_relevance(stack, &current_focus);
+            }
+        }
     }
 
     /// Remove old tool outputs, keeping only the most recent entries.
@@ -75,6 +93,78 @@ impl ContextCompressor {
                 stack.working.recent_tool_outputs.pop_front();
             }
         }
+    }
+
+    /// Roll session history when the working layer has too many tool outputs.
+    ///
+    /// Moves completed steps from session memory into a summary string and
+    /// prunes older entries, keeping only the most critical completed steps.
+    /// This reduces context bloat by replacing verbose step history with a
+    /// compressed summary.
+    pub fn roll_session_history(&self, stack: &mut ContextStack) {
+        let completed_count = stack.session.completed_steps.len();
+        if completed_count == 0 {
+            return;
+        }
+
+        // Build a summary from completed steps
+        let summary_lines: Vec<&str> = stack
+            .session
+            .completed_steps
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        let summary = format!(
+            "[Session rollover — {} completed steps summarized]\n{}",
+            completed_count,
+            summary_lines.join("\n")
+        );
+
+        // Mark rollover in key_decisions
+        stack
+            .session
+            .key_decisions
+            .push(format!("Session history rolled over at {completed_count} steps"));
+
+        // Keep only the most critical completed steps (last 5 entries)
+        if completed_count > 5 {
+            let keep = stack.session.completed_steps.split_off(completed_count - 5);
+            stack.session.completed_steps = keep;
+        }
+
+        // Save the full summary so it can be included in context
+        // We store it as a note in key_decisions for reference
+        stack
+            .session
+            .key_decisions
+            .push(format!("Summarized steps:\n{summary}"));
+    }
+
+    /// Filter tool outputs by relevance to the current focus keywords/paths.
+    ///
+    /// Examines the working layer's recent tool outputs and removes entries
+    /// whose tool name and output content don't overlap with any of the
+    /// `current_focus` strings. Relevance is determined by simple substring
+    /// matching: if the focus keyword appears in the tool name or output,
+    /// the entry is kept.
+    pub fn filter_by_relevance(&self, stack: &mut ContextStack, current_focus: &[String]) {
+        if current_focus.is_empty() || stack.working.recent_tool_outputs.is_empty() {
+            return;
+        }
+
+        let focus_lower: Vec<String> = current_focus.iter().map(|f| f.to_lowercase()).collect();
+
+        stack.working.recent_tool_outputs.retain(|(tool_name, result)| {
+            let tool_lower = tool_name.to_lowercase();
+            let output_lower = result.output.to_lowercase();
+
+            // Keep if any focus keyword matches tool name or output content
+            focus_lower.iter().any(|keyword| {
+                tool_lower.contains(keyword)
+                    || output_lower.contains(keyword)
+                    || keyword.contains(&tool_lower)
+            })
+        });
     }
 }
 

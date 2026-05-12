@@ -20,7 +20,7 @@ pub mod gate;
 pub mod policy;
 pub mod selector;
 
-pub use backend::{NativeSandbox, SandboxBackend, SandboxCommand, SandboxError, SandboxOutput};
+pub use backend::{DockerSandbox, NativeSandbox, SandboxBackend, SandboxCommand, SandboxError, SandboxOutput};
 pub use classifier::OperationClassifier;
 pub use gate::{ApprovalGate, ApprovalPolicy, ApprovalRequest, ApprovalResult};
 pub use policy::{NetworkPolicy, SandboxPolicy};

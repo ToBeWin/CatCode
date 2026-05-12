@@ -1,0 +1,14 @@
+[package]
+name = "catcode-cli"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+catcode-core = { path = "../catcode-core" }
+clap = { version = "4", features = ["derive"] }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+
+[[bin]]
+name = "catcode"
+path = "src/main.rs"

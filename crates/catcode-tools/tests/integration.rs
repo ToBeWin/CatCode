@@ -25,14 +25,21 @@ fn test_registry_has_all_builtins() {
     assert!(names.contains(&"search_files".to_string()));
     assert!(names.contains(&"glob".to_string()));
     assert!(names.contains(&"list_dir".to_string()));
-    assert_eq!(names.len(), 6);
+    assert!(names.contains(&"patch_file".to_string()));
+    assert!(names.contains(&"git_status".to_string()));
+    assert!(names.contains(&"git_diff".to_string()));
+    assert!(names.contains(&"git_commit".to_string()));
+    assert!(names.contains(&"delete_file".to_string()));
+    assert!(names.contains(&"web_fetch".to_string()));
+    assert!(names.contains(&"code_analysis".to_string()));
+    assert_eq!(names.len(), 13);
 }
 
 #[test]
 fn test_registry_llm_schema_count() {
     let reg = ToolRegistry::with_builtins();
     let schemas = reg.to_llm_schema();
-    assert_eq!(schemas.len(), 6);
+    assert_eq!(schemas.len(), 13);
 
     // Each schema should have name, description, parameters
     for schema in &schemas {

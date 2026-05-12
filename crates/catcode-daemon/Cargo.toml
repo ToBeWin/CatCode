@@ -3,6 +3,10 @@ name = "catcode-daemon"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "catcode-daemon"
+path = "src/main.rs"
+
 [dependencies]
 catcode-core = { path = "../catcode-core" }
 catcode-provider = { path = "../catcode-provider" }
@@ -10,16 +14,19 @@ catcode-tools = { path = "../catcode-tools" }
 catcode-context = { path = "../catcode-context" }
 catcode-middleware = { path = "../catcode-middleware" }
 catcode-sandbox = { path = "../catcode-sandbox" }
+catcode-api = { path = "../catcode-api" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = "0.8"
 tokio = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 sqlx = { workspace = true }
+regex = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

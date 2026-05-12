@@ -19,15 +19,21 @@ pub mod checkpoint;
 pub mod concurrent_session;
 pub mod config;
 pub mod persistence;
+pub mod code_review;
+pub mod security_check;
 pub mod session;
 pub mod session_manager;
 pub mod subagent;
+pub mod swe_bench;
 
 pub use agent_loop::{AgentLoop, AgentLoopError, AgentLoopResult};
 pub use benchmark::{
     BenchmarkCase, BenchmarkReport, BenchmarkResult, default_benchmark_cases, format_report_table,
 };
 pub use checkpoint::{Checkpoint, CheckpointManager, CheckpointMeta};
+pub use code_review::{
+    CodeReview, CodeReviewer, ReviewCategory, ReviewFinding, ReviewSeverity,
+};
 pub use concurrent_session::{
     ConcurrentSessionManager, SessionCommand, SessionEvent, SessionHandle,
 };
@@ -36,6 +42,10 @@ pub use persistence::Database;
 pub use session::{Session, SessionId, SessionState, SessionSummary};
 pub use session_manager::SessionManager;
 pub use subagent::{SubAgentConfig, SubAgentResult, SubAgentSpawner};
+pub use swe_bench::{
+    SweBenchConfig, SweBenchHarness, SweBenchInstance, SweBenchReport, SweBenchResult,
+    TestResults, format_summary, load_dataset, sample_instances, save_results,
+};
 
 /// Create a default middleware chain with all built-in middlewares including sandbox.
 ///

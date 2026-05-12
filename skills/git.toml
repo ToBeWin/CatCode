@@ -1,0 +1,26 @@
+[skill]
+name = "git"
+version = "1.0.0"
+description = "Git workflow skill"
+
+[rules]
+always_run = []
+prefer_tools = ["git_status", "git_diff", "git_commit"]
+avoid_tools = []
+
+[prompts]
+system_suffix = """
+Follow conventional commits format for commit messages:
+- feat: new feature
+- fix: bug fix
+- refactor: code restructuring
+- docs: documentation changes
+- test: test additions/changes
+"""
+
+[context]
+always_include_files = []
+ignore_patterns = []
+
+[hooks]
+before_commit = "cargo test"

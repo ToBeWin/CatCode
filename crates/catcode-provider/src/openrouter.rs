@@ -1,62 +1,76 @@
 use async_trait::async_trait;
 use catcode_core::error::ProviderError;
 use catcode_core::provider::{
-    ChatStream, ChatStreamChunk, ModelInfo, ModelTier, Provider, ProviderCapabilities,
-    ProviderContext, TokenCounter, ToolCallDelta,
+    ModelInfo, ModelTier, Provider, ProviderCapabilities, ProviderContext, TokenCounter,
 };
 use catcode_core::types::{
     ChatRequest, ChatResponse, ContentBlock, Message, Role, StopReason, TokenUsage,
 };
 use serde::{Deserialize, Serialize};
 
+// === OpenRouter model list ===
+
+pub const OPENROUTER_MODELS: &[(&str, &str, f64, f64, u64, ModelTier)] = &[
+    ("openrouter/auto", "OpenRouter Auto", 0.0, 0.0, 128_000, ModelTier::Balanced),
+    ("anthropic/claude-sonnet-4", "Claude Sonnet 4", 3.0, 15.0, 200_000, ModelTier::Powerful),
+    ("anthropic/claude-3.5-sonnet", "Claude 3.5 Sonnet", 3.0, 15.0, 200_000, ModelTier::Powerful),
+    ("openai/gpt-4o", "GPT-4o", 2.5, 10.0, 128_000, ModelTier::Powerful),
+    ("google/gemini-2.5-pro", "Gemini 2.5 Pro", 1.25, 5.0, 1_000_000, ModelTier::Powerful),
+    ("deepseek/deepseek-chat", "DeepSeek V3", 0.5, 0.5, 128_000, ModelTier::Balanced),
+    ("deepseek/deepseek-r1", "DeepSeek R1", 0.55, 2.19, 128_000, ModelTier::Powerful),
+    ("qwen/qwen3", "Qwen 3", 0.35, 0.7, 32_000, ModelTier::Balanced),
+    ("mistral/mistral-large", "Mistral Large", 2.0, 6.0, 128_000, ModelTier::Powerful),
+    ("meta-llama/llama-3.3-70b", "Llama 3.3 70B", 0.36, 0.72, 128_000, ModelTier::Balanced),
+];
+
 // === Request types (OpenAI-compatible) ===
 
 #[derive(Debug, Serialize)]
-struct DeepSeekRequest {
+struct OpenRouterRequest {
     model: String,
-    messages: Vec<DeepSeekMessage>,
+    messages: Vec<OpenRouterMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<DeepSeekTool>>,
+    tools: Option<Vec<OpenRouterTool>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct DeepSeekMessage {
+struct OpenRouterMessage {
     role: String,
     content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<DeepSeekToolCall>>,
+    tool_calls: Option<Vec<OpenRouterToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct DeepSeekToolCall {
+struct OpenRouterToolCall {
     id: String,
     #[serde(rename = "type")]
     call_type: String,
-    function: DeepSeekFunction,
+    function: OpenRouterFunction,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct DeepSeekFunction {
+struct OpenRouterFunction {
     name: String,
     arguments: String,
 }
 
 #[derive(Debug, Serialize)]
-struct DeepSeekTool {
+struct OpenRouterTool {
     #[serde(rename = "type")]
     tool_type: String,
-    function: DeepSeekFunctionDef,
+    function: OpenRouterFunctionDef,
 }
 
 #[derive(Debug, Serialize)]
-struct DeepSeekFunctionDef {
+struct OpenRouterFunctionDef {
     name: String,
     description: String,
     parameters: serde_json::Value,
@@ -65,93 +79,61 @@ struct DeepSeekFunctionDef {
 // === Response types ===
 
 #[derive(Debug, Deserialize)]
-struct DeepSeekResponse {
+struct OpenRouterResponse {
     #[allow(dead_code)]
     id: String,
     #[allow(dead_code)]
     model: String,
-    choices: Vec<DeepSeekChoice>,
-    usage: DeepSeekUsage,
+    choices: Vec<OpenRouterChoice>,
+    usage: OpenRouterUsage,
 }
 
 #[derive(Debug, Deserialize)]
-struct DeepSeekChoice {
+struct OpenRouterChoice {
     #[allow(dead_code)]
     index: usize,
-    message: DeepSeekResponseMessage,
+    message: OpenRouterResponseMessage,
     finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct DeepSeekResponseMessage {
+struct OpenRouterResponseMessage {
     #[allow(dead_code)]
     role: String,
     content: Option<String>,
-    reasoning_content: Option<String>,
-    tool_calls: Option<Vec<DeepSeekResponseToolCall>>,
+    tool_calls: Option<Vec<OpenRouterResponseToolCall>>,
 }
 
 #[derive(Debug, Deserialize)]
-struct DeepSeekResponseToolCall {
+struct OpenRouterResponseToolCall {
     id: String,
     #[serde(rename = "type")]
     #[allow(dead_code)]
     call_type: Option<String>,
-    function: DeepSeekResponseFunction,
+    function: OpenRouterResponseFunction,
 }
 
 #[derive(Debug, Deserialize)]
-struct DeepSeekResponseFunction {
+struct OpenRouterResponseFunction {
     name: String,
     arguments: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct DeepSeekUsage {
+struct OpenRouterUsage {
     prompt_tokens: u64,
     completion_tokens: u64,
     #[allow(dead_code)]
     total_tokens: Option<u64>,
-    #[serde(default)]
-    prompt_cache_hit_tokens: Option<u64>,
-    #[serde(default)]
-    prompt_cache_miss_tokens: Option<u64>,
-}
-
-// === Streaming response types ===
-
-#[derive(Debug, Deserialize)]
-struct StreamChunk {
-    choices: Option<Vec<StreamChoice>>,
-    usage: Option<DeepSeekUsage>,
-}
-
-#[derive(Debug, Deserialize)]
-struct StreamChoice {
-    delta: StreamDelta,
-    #[allow(dead_code)]
-    index: usize,
-    finish_reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct StreamDelta {
-    content: Option<String>,
-    reasoning_content: Option<String>,
-    #[allow(dead_code)]
-    role: Option<String>,
-    tool_calls: Option<Vec<DeepSeekResponseToolCall>>,
 }
 
 // === Conversion functions ===
 
-/// Convert a catcode-core ChatRequest into a DeepSeek API request.
-fn convert_request(req: &ChatRequest) -> Result<DeepSeekRequest, ProviderError> {
-    let mut messages: Vec<DeepSeekMessage> = Vec::new();
+fn convert_request(req: &ChatRequest) -> Result<OpenRouterRequest, ProviderError> {
+    let mut messages: Vec<OpenRouterMessage> = Vec::new();
 
-    // If there's a system prompt, add it as a system message first.
     if let Some(ref system) = req.system {
-        messages.push(DeepSeekMessage {
+        messages.push(OpenRouterMessage {
             role: "system".to_string(),
             content: Some(system.clone()),
             tool_calls: None,
@@ -166,9 +148,9 @@ fn convert_request(req: &ChatRequest) -> Result<DeepSeekRequest, ProviderError> 
     let tools = req.tools.as_ref().map(|tools| {
         tools
             .iter()
-            .map(|t| DeepSeekTool {
+            .map(|t| OpenRouterTool {
                 tool_type: "function".to_string(),
-                function: DeepSeekFunctionDef {
+                function: OpenRouterFunctionDef {
                     name: t.name.clone(),
                     description: t.description.clone(),
                     parameters: t.parameters.clone(),
@@ -177,7 +159,7 @@ fn convert_request(req: &ChatRequest) -> Result<DeepSeekRequest, ProviderError> 
             .collect()
     });
 
-    Ok(DeepSeekRequest {
+    Ok(OpenRouterRequest {
         model: req.model.clone(),
         messages,
         max_tokens: req.max_tokens,
@@ -187,7 +169,7 @@ fn convert_request(req: &ChatRequest) -> Result<DeepSeekRequest, ProviderError> 
     })
 }
 
-fn convert_message(msg: &Message) -> Result<DeepSeekMessage, ProviderError> {
+fn convert_message(msg: &Message) -> Result<OpenRouterMessage, ProviderError> {
     let role = match msg.role {
         Role::System => "system",
         Role::User => "user",
@@ -198,10 +180,10 @@ fn convert_message(msg: &Message) -> Result<DeepSeekMessage, ProviderError> {
     let tool_calls = msg.tool_calls.as_ref().map(|calls| {
         calls
             .iter()
-            .map(|tc| DeepSeekToolCall {
+            .map(|tc| OpenRouterToolCall {
                 id: tc.id.clone(),
                 call_type: "function".to_string(),
-                function: DeepSeekFunction {
+                function: OpenRouterFunction {
                     name: tc.name.clone(),
                     arguments: serde_json::to_string(&tc.args).unwrap_or_default(),
                 },
@@ -209,20 +191,15 @@ fn convert_message(msg: &Message) -> Result<DeepSeekMessage, ProviderError> {
             .collect()
     });
 
-    Ok(DeepSeekMessage {
+    Ok(OpenRouterMessage {
         role: role.to_string(),
-        content: if msg.content.is_empty() {
-            None
-        } else {
-            Some(msg.content.clone())
-        },
+        content: if msg.content.is_empty() { None } else { Some(msg.content.clone()) },
         tool_calls,
         tool_call_id: msg.tool_call_id.clone(),
     })
 }
 
-/// Convert a DeepSeek API response into a catcode-core ChatResponse.
-fn convert_response(resp: DeepSeekResponse, model: &str) -> Result<ChatResponse, ProviderError> {
+fn convert_response(resp: OpenRouterResponse, model: &str) -> Result<ChatResponse, ProviderError> {
     let choice = resp
         .choices
         .into_iter()
@@ -230,14 +207,6 @@ fn convert_response(resp: DeepSeekResponse, model: &str) -> Result<ChatResponse,
         .ok_or_else(|| ProviderError::RequestFailed("No choices in response".to_string()))?;
 
     let mut content = Vec::new();
-
-    if let Some(ref reasoning) = choice.message.reasoning_content
-        && !reasoning.is_empty()
-    {
-        content.push(ContentBlock::Thinking {
-            text: reasoning.clone(),
-        });
-    }
 
     if let Some(text) = choice.message.content
         && !text.is_empty()
@@ -264,32 +233,28 @@ fn convert_response(resp: DeepSeekResponse, model: &str) -> Result<ChatResponse,
         _ => StopReason::EndTurn,
     };
 
-    let cache_read = resp.usage.prompt_cache_hit_tokens.unwrap_or(0);
-    let cache_creation = resp.usage.prompt_cache_miss_tokens.unwrap_or(0);
-
     Ok(ChatResponse {
         content,
         usage: TokenUsage {
             input_tokens: resp.usage.prompt_tokens,
             output_tokens: resp.usage.completion_tokens,
-            cache_read_tokens: cache_read,
-            cache_creation_tokens: cache_creation,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
         },
         stop_reason,
         model: model.to_string(),
     })
 }
 
-// === DeepSeek Provider ===
+// === OpenRouter Provider ===
 
-/// DeepSeek provider implementation using the OpenAI-compatible API.
-pub struct DeepSeekProvider {
+pub struct OpenRouterProvider {
     api_key: String,
     base_url: String,
     client: reqwest::Client,
 }
 
-impl DeepSeekProvider {
+impl OpenRouterProvider {
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,
@@ -298,18 +263,15 @@ impl DeepSeekProvider {
         }
     }
 
-    /// Build the full API URL for chat completions.
     fn chat_url(&self) -> String {
         format!("{}/chat/completions", self.base_url)
     }
 }
 
-/// A simple tokenizer that estimates ~4 chars per token for DeepSeek.
-pub struct DeepSeekTokenCounter;
+pub struct OpenRouterTokenCounter;
 
-impl TokenCounter for DeepSeekTokenCounter {
+impl TokenCounter for OpenRouterTokenCounter {
     fn count_text(&self, text: &str) -> usize {
-        // Rough estimate: ~4 characters per token
         text.len().div_ceil(4)
     }
 
@@ -322,42 +284,35 @@ impl TokenCounter for DeepSeekTokenCounter {
 }
 
 #[async_trait]
-impl Provider for DeepSeekProvider {
+impl Provider for OpenRouterProvider {
     fn id(&self) -> &str {
-        "deepseek"
+        "openrouter"
     }
 
     fn display_name(&self) -> &str {
-        "DeepSeek"
+        "OpenRouter"
     }
 
     fn supported_models(&self) -> Vec<ModelInfo> {
-        vec![
-            ModelInfo {
-                id: "deepseek-chat".to_string(),
-                display_name: "DeepSeek Chat".to_string(),
-                input_price_per_mtok: 0.14,
-                output_price_per_mtok: 0.28,
-                context_window: 64_000,
-                tier: ModelTier::Balanced,
-            },
-            ModelInfo {
-                id: "deepseek-reasoner".to_string(),
-                display_name: "DeepSeek Reasoner".to_string(),
-                input_price_per_mtok: 0.55,
-                output_price_per_mtok: 2.19,
-                context_window: 64_000,
-                tier: ModelTier::Powerful,
-            },
-        ]
+        OPENROUTER_MODELS
+            .iter()
+            .map(|(id, name, input_price, output_price, ctx, tier)| ModelInfo {
+                id: id.to_string(),
+                display_name: name.to_string(),
+                input_price_per_mtok: *input_price,
+                output_price_per_mtok: *output_price,
+                context_window: *ctx,
+                tier: *tier,
+            })
+            .collect()
     }
 
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             supports_tool_call: true,
-            supports_vision: false,
-            supports_prompt_cache: true,
-            max_context_tokens: 64_000,
+            supports_vision: true,
+            supports_prompt_cache: false,
+            max_context_tokens: 200_000,
             supports_streaming: true,
         }
     }
@@ -367,7 +322,7 @@ impl Provider for DeepSeekProvider {
         request: ChatRequest,
         _ctx: &ProviderContext,
     ) -> Result<ChatResponse, ProviderError> {
-        let ds_req = convert_request(&request)?;
+        let or_req = convert_request(&request)?;
         let url = self.chat_url();
 
         let resp = self
@@ -375,7 +330,9 @@ impl Provider for DeepSeekProvider {
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
-            .json(&ds_req)
+            .header("HTTP-Referer", "https://opencode.ai")
+            .header("X-Title", "CatCode")
+            .json(&or_req)
             .send()
             .await
             .map_err(|e| ProviderError::RequestFailed(format!("HTTP request failed: {e}")))?;
@@ -400,16 +357,15 @@ impl Provider for DeepSeekProvider {
             };
         }
 
-        let ds_resp: DeepSeekResponse = resp
+        let or_resp: OpenRouterResponse = resp
             .json()
             .await
             .map_err(|e| ProviderError::RequestFailed(format!("Failed to parse response: {e}")))?;
 
-        convert_response(ds_resp, &request.model)
+        convert_response(or_resp, &request.model)
     }
 
     async fn health_check(&self) -> Result<(), ProviderError> {
-        // A lightweight check: just verify we can reach the server
         let url = format!("{}/models", self.base_url);
         let resp = self
             .client
@@ -430,130 +386,7 @@ impl Provider for DeepSeekProvider {
     }
 
     fn token_counter(&self) -> Box<dyn TokenCounter> {
-        Box::new(DeepSeekTokenCounter)
-    }
-}
-
-/// Convert a streaming SSE chunk into a ChatStreamChunk.
-fn convert_stream_chunk(chunk: StreamChunk) -> Option<ChatStreamChunk> {
-    use catcode_core::types::StopReason;
-
-    let choice = chunk.choices?.into_iter().next()?;
-
-    let tool_call_delta = choice.delta.tool_calls.and_then(|calls| {
-        calls.into_iter().next().map(|tc| ToolCallDelta {
-            id: Some(tc.id),
-            name: Some(tc.function.name),
-            args_delta: Some(tc.function.arguments),
-        })
-    });
-
-    let stop_reason = choice.finish_reason.as_deref().and_then(|r| match r {
-        "stop" => Some(StopReason::EndTurn),
-        "length" => Some(StopReason::MaxTokens),
-        "tool_calls" => Some(StopReason::ToolUse),
-        _ => None,
-    });
-
-    Some(ChatStreamChunk {
-        content: choice.delta.content.filter(|c| !c.is_empty()),
-        thinking: choice.delta.reasoning_content.filter(|c| !c.is_empty()),
-        tool_call_delta,
-        usage: chunk.usage.map(|u| TokenUsage {
-            input_tokens: u.prompt_tokens,
-            output_tokens: u.completion_tokens,
-            cache_read_tokens: u.prompt_cache_hit_tokens.unwrap_or(0),
-            cache_creation_tokens: u.prompt_cache_miss_tokens.unwrap_or(0),
-        }),
-        stop_reason,
-    })
-}
-
-impl DeepSeekProvider {
-    /// Stream a chat completion, yielding chunks as they arrive from the API.
-    pub async fn stream_chat(
-        &self,
-        request: ChatRequest,
-        _ctx: &ProviderContext,
-    ) -> Result<ChatStream, ProviderError> {
-        let ds_req = convert_request(&request)?;
-        let url = self.chat_url();
-        let client = self.client.clone();
-        let api_key = self.api_key.clone();
-
-        let resp = client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Content-Type", "application/json")
-            .json(&ds_req)
-            .send()
-            .await
-            .map_err(|e| ProviderError::RequestFailed(format!("HTTP request failed: {e}")))?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp
-                .text()
-                .await
-                .unwrap_or_else(|_| "failed to read error body".to_string());
-            return match status.as_u16() {
-                401 => Err(ProviderError::AuthFailed(body)),
-                429 => Err(ProviderError::RateLimited {
-                    retry_after_ms: 1000,
-                }),
-                500..=599 => Err(ProviderError::Unavailable(format!(
-                    "Server error {status}: {body}"
-                ))),
-                _ => Err(ProviderError::RequestFailed(format!(
-                    "HTTP {status}: {body}"
-                ))),
-            };
-        }
-
-        let (tx, rx) = futures::channel::mpsc::unbounded();
-
-        tokio::spawn(async move {
-            use futures::StreamExt;
-
-            let mut byte_stream = resp.bytes_stream();
-            let mut buffer: Vec<u8> = Vec::new();
-
-            while let Some(chunk_result) = byte_stream.next().await {
-                let chunk = match chunk_result {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.unbounded_send(Err(ProviderError::RequestFailed(
-                            format!("Stream error: {e}"),
-                        )));
-                        return;
-                    }
-                };
-
-                for &byte in &chunk {
-                    if byte == b'\n' {
-                            if buffer.starts_with(b"data: ") {
-                            let data = &buffer[6..];
-                            let data_str = std::str::from_utf8(data).unwrap_or("");
-                            if data_str.trim() == "[DONE]" {
-                                return;
-                            }
-                            if let Ok(sse_chunk) =
-                                serde_json::from_slice::<StreamChunk>(data)
-                            {
-                                if let Some(chat_chunk) = convert_stream_chunk(sse_chunk) {
-                                    let _ = tx.unbounded_send(Ok(chat_chunk));
-                                }
-                            }
-                        }
-                        buffer.clear();
-                    } else if byte != b'\r' {
-                        buffer.push(byte);
-                    }
-                }
-            }
-        });
-
-        Ok(Box::pin(rx))
+        Box::new(OpenRouterTokenCounter)
     }
 }
 
@@ -566,9 +399,9 @@ mod tests {
 
     #[test]
     fn test_serialize_request_basic() {
-        let req = DeepSeekRequest {
-            model: "deepseek-chat".to_string(),
-            messages: vec![DeepSeekMessage {
+        let req = OpenRouterRequest {
+            model: "openrouter/auto".to_string(),
+            messages: vec![OpenRouterMessage {
                 role: "user".to_string(),
                 content: Some("Hello".to_string()),
                 tool_calls: None,
@@ -581,26 +414,25 @@ mod tests {
         };
 
         let json = serde_json::to_value(&req).unwrap();
-        assert_eq!(json["model"], "deepseek-chat");
+        assert_eq!(json["model"], "openrouter/auto");
         assert_eq!(json["messages"][0]["role"], "user");
         assert_eq!(json["messages"][0]["content"], "Hello");
         assert_eq!(json["max_tokens"], 4096);
         assert_eq!(json["stream"], false);
-        // tools should be absent when None
         assert!(json.get("tools").is_none());
     }
 
     #[test]
     fn test_serialize_request_with_tools() {
-        let req = DeepSeekRequest {
-            model: "deepseek-chat".to_string(),
+        let req = OpenRouterRequest {
+            model: "openrouter/auto".to_string(),
             messages: vec![],
             max_tokens: None,
             temperature: None,
             stream: false,
-            tools: Some(vec![DeepSeekTool {
+            tools: Some(vec![OpenRouterTool {
                 tool_type: "function".to_string(),
-                function: DeepSeekFunctionDef {
+                function: OpenRouterFunctionDef {
                     name: "read_file".to_string(),
                     description: "Read a file".to_string(),
                     parameters: serde_json::json!({
@@ -620,13 +452,13 @@ mod tests {
 
     #[test]
     fn test_serialize_tool_call_message() {
-        let msg = DeepSeekMessage {
+        let msg = OpenRouterMessage {
             role: "assistant".to_string(),
             content: None,
-            tool_calls: Some(vec![DeepSeekToolCall {
+            tool_calls: Some(vec![OpenRouterToolCall {
                 id: "call_123".to_string(),
                 call_type: "function".to_string(),
-                function: DeepSeekFunction {
+                function: OpenRouterFunction {
                     name: "read_file".to_string(),
                     arguments: r#"{"path":"src/main.rs"}"#.to_string(),
                 },
@@ -642,7 +474,7 @@ mod tests {
 
     #[test]
     fn test_serialize_tool_result_message() {
-        let msg = DeepSeekMessage {
+        let msg = OpenRouterMessage {
             role: "tool".to_string(),
             content: Some("file contents here".to_string()),
             tool_calls: None,
@@ -662,7 +494,7 @@ mod tests {
         let json = serde_json::json!({
             "id": "chatcmpl-123",
             "object": "chat.completion",
-            "model": "deepseek-chat",
+            "model": "anthropic/claude-sonnet-4",
             "choices": [{
                 "index": 0,
                 "message": {
@@ -678,7 +510,7 @@ mod tests {
             }
         });
 
-        let resp: DeepSeekResponse = serde_json::from_value(json).unwrap();
+        let resp: OpenRouterResponse = serde_json::from_value(json).unwrap();
         assert_eq!(resp.choices.len(), 1);
         assert_eq!(
             resp.choices[0].message.content.as_deref(),
@@ -694,7 +526,7 @@ mod tests {
         let json = serde_json::json!({
             "id": "chatcmpl-456",
             "object": "chat.completion",
-            "model": "deepseek-chat",
+            "model": "anthropic/claude-sonnet-4",
             "choices": [{
                 "index": 0,
                 "message": {
@@ -718,7 +550,7 @@ mod tests {
             }
         });
 
-        let resp: DeepSeekResponse = serde_json::from_value(json).unwrap();
+        let resp: OpenRouterResponse = serde_json::from_value(json).unwrap();
         let msg = &resp.choices[0].message;
         assert!(msg.tool_calls.is_some());
         let calls = msg.tool_calls.as_ref().unwrap();
@@ -730,9 +562,9 @@ mod tests {
     // === Conversion tests ===
 
     #[test]
-    fn test_convert_chat_request_to_deepseek() {
+    fn test_convert_chat_request_to_openrouter() {
         let req = ChatRequest {
-            model: "deepseek-chat".to_string(),
+            model: "openrouter/auto".to_string(),
             messages: vec![
                 Message::system("You are helpful"),
                 Message::user("Hello"),
@@ -764,25 +596,25 @@ mod tests {
             stream: false,
         };
 
-        let ds_req = convert_request(&req).unwrap();
-        assert_eq!(ds_req.model, "deepseek-chat");
-        assert_eq!(ds_req.messages.len(), 6);
-        assert_eq!(ds_req.messages[0].role, "system");
-        assert_eq!(ds_req.messages[1].role, "user");
-        assert_eq!(ds_req.messages[2].role, "assistant");
-        assert_eq!(ds_req.messages[3].role, "user");
-        assert_eq!(ds_req.messages[4].role, "assistant");
-        assert!(ds_req.messages[4].tool_calls.is_some());
-        assert_eq!(ds_req.messages[5].role, "tool");
-        assert_eq!(ds_req.messages[5].tool_call_id.as_deref(), Some("call_1"));
-        assert!(ds_req.tools.is_some());
-        assert_eq!(ds_req.tools.as_ref().unwrap().len(), 1);
+        let or_req = convert_request(&req).unwrap();
+        assert_eq!(or_req.model, "openrouter/auto");
+        assert_eq!(or_req.messages.len(), 6);
+        assert_eq!(or_req.messages[0].role, "system");
+        assert_eq!(or_req.messages[1].role, "user");
+        assert_eq!(or_req.messages[2].role, "assistant");
+        assert_eq!(or_req.messages[3].role, "user");
+        assert_eq!(or_req.messages[4].role, "assistant");
+        assert!(or_req.messages[4].tool_calls.is_some());
+        assert_eq!(or_req.messages[5].role, "tool");
+        assert_eq!(or_req.messages[5].tool_call_id.as_deref(), Some("call_1"));
+        assert!(or_req.tools.is_some());
+        assert_eq!(or_req.tools.as_ref().unwrap().len(), 1);
     }
 
     #[test]
     fn test_convert_request_with_system_field() {
         let req = ChatRequest {
-            model: "deepseek-chat".to_string(),
+            model: "openrouter/auto".to_string(),
             messages: vec![Message::user("Hello")],
             tools: None,
             system: Some("You are a helpful assistant".to_string()),
@@ -791,41 +623,38 @@ mod tests {
             stream: false,
         };
 
-        let ds_req = convert_request(&req).unwrap();
-        assert_eq!(ds_req.messages.len(), 2);
-        assert_eq!(ds_req.messages[0].role, "system");
+        let or_req = convert_request(&req).unwrap();
+        assert_eq!(or_req.messages.len(), 2);
+        assert_eq!(or_req.messages[0].role, "system");
         assert_eq!(
-            ds_req.messages[0].content.as_deref(),
+            or_req.messages[0].content.as_deref(),
             Some("You are a helpful assistant")
         );
-        assert_eq!(ds_req.messages[1].role, "user");
+        assert_eq!(or_req.messages[1].role, "user");
     }
 
     #[test]
     fn test_convert_response_to_chat_response() {
-        let ds_resp = DeepSeekResponse {
+        let or_resp = OpenRouterResponse {
             id: "chatcmpl-123".to_string(),
-            model: "deepseek-chat".to_string(),
-            choices: vec![DeepSeekChoice {
+            model: "anthropic/claude-sonnet-4".to_string(),
+            choices: vec![OpenRouterChoice {
                 index: 0,
-                message: DeepSeekResponseMessage {
+                message: OpenRouterResponseMessage {
                     role: "assistant".to_string(),
                     content: Some("Hello!".to_string()),
-                    reasoning_content: None,
                     tool_calls: None,
                 },
                 finish_reason: Some("stop".to_string()),
             }],
-            usage: DeepSeekUsage {
+            usage: OpenRouterUsage {
                 prompt_tokens: 10,
                 completion_tokens: 5,
                 total_tokens: Some(15),
-                prompt_cache_hit_tokens: Some(0),
-                prompt_cache_miss_tokens: Some(10),
             },
         };
 
-        let resp = convert_response(ds_resp, "deepseek-chat").unwrap();
+        let resp = convert_response(or_resp, "anthropic/claude-sonnet-4").unwrap();
         assert_eq!(resp.content.len(), 1);
         assert_eq!(resp.text_content(), "Hello!");
         assert_eq!(resp.stop_reason, StopReason::EndTurn);
@@ -835,19 +664,18 @@ mod tests {
 
     #[test]
     fn test_convert_response_with_tool_calls() {
-        let ds_resp = DeepSeekResponse {
+        let or_resp = OpenRouterResponse {
             id: "chatcmpl-456".to_string(),
-            model: "deepseek-chat".to_string(),
-            choices: vec![DeepSeekChoice {
+            model: "anthropic/claude-sonnet-4".to_string(),
+            choices: vec![OpenRouterChoice {
                 index: 0,
-                message: DeepSeekResponseMessage {
+                message: OpenRouterResponseMessage {
                     role: "assistant".to_string(),
                     content: None,
-                    reasoning_content: None,
-                    tool_calls: Some(vec![DeepSeekResponseToolCall {
+                    tool_calls: Some(vec![OpenRouterResponseToolCall {
                         id: "call_abc".to_string(),
                         call_type: Some("function".to_string()),
-                        function: DeepSeekResponseFunction {
+                        function: OpenRouterResponseFunction {
                             name: "read_file".to_string(),
                             arguments: r#"{"path":"src/main.rs"}"#.to_string(),
                         },
@@ -855,16 +683,14 @@ mod tests {
                 },
                 finish_reason: Some("tool_calls".to_string()),
             }],
-            usage: DeepSeekUsage {
+            usage: OpenRouterUsage {
                 prompt_tokens: 20,
                 completion_tokens: 15,
                 total_tokens: Some(35),
-                prompt_cache_hit_tokens: None,
-                prompt_cache_miss_tokens: None,
             },
         };
 
-        let resp = convert_response(ds_resp, "deepseek-chat").unwrap();
+        let resp = convert_response(or_resp, "anthropic/claude-sonnet-4").unwrap();
         assert!(resp.has_tool_calls());
         assert_eq!(resp.stop_reason, StopReason::ToolUse);
         let tc = match &resp.content[0] {
@@ -881,27 +707,55 @@ mod tests {
 
     // === Provider metadata tests ===
 
-    fn create_test_provider() -> DeepSeekProvider {
-        DeepSeekProvider::new(
+    fn create_test_provider() -> OpenRouterProvider {
+        OpenRouterProvider::new(
             "test-key".to_string(),
-            "https://api.deepseek.com".to_string(),
+            "https://openrouter.ai/api/v1".to_string(),
         )
     }
 
     #[test]
-    fn test_deepseek_provider_metadata() {
+    fn test_openrouter_provider_metadata() {
         let provider = create_test_provider();
-        assert_eq!(provider.id(), "deepseek");
-        assert_eq!(provider.display_name(), "DeepSeek");
-        assert!(!provider.supported_models().is_empty());
+        assert_eq!(provider.id(), "openrouter");
+        assert_eq!(provider.display_name(), "OpenRouter");
+        assert_eq!(provider.supported_models().len(), 10);
     }
 
     #[test]
-    fn test_deepseek_capabilities() {
+    fn test_openrouter_capabilities() {
         let provider = create_test_provider();
         let caps = provider.capabilities();
         assert!(caps.supports_tool_call);
         assert!(caps.supports_streaming);
-        assert!(caps.max_context_tokens > 0);
+        assert!(caps.supports_vision);
+        assert_eq!(caps.max_context_tokens, 200_000);
+    }
+
+    #[test]
+    fn test_chat_url() {
+        let provider = create_test_provider();
+        assert_eq!(
+            provider.chat_url(),
+            "https://openrouter.ai/api/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_token_counter() {
+        let counter = OpenRouterTokenCounter;
+        assert_eq!(counter.count_text("hello"), 2);
+        assert_eq!(counter.count_text("x".repeat(100).as_str()), 25);
+    }
+
+    #[test]
+    fn test_openrouter_models_have_tiers() {
+        let provider = create_test_provider();
+        let models = provider.supported_models();
+
+        let powerful = models.iter().filter(|m| m.tier == ModelTier::Powerful).count();
+        let balanced = models.iter().filter(|m| m.tier == ModelTier::Balanced).count();
+        assert!(powerful >= 4);
+        assert!(balanced >= 4);
     }
 }

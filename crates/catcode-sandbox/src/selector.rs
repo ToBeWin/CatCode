@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::backend::{NativeSandbox, SandboxBackend};
+use crate::backend::{DockerSandbox, NativeSandbox, SandboxBackend};
 
 /// Selects the best available sandbox backend.
 ///
@@ -16,8 +16,8 @@ impl SandboxSelector {
         };
 
         // Register backends in priority order
-        // Docker and Firejail are not yet implemented — placeholder for future
-        // For now, always fall back to native
+        // Docker is preferred; fall back to native
+        selector.register("docker", Arc::new(DockerSandbox::new()));
         selector.register("native", Arc::new(NativeSandbox::new()));
 
         selector
@@ -75,7 +75,7 @@ mod tests {
     fn test_selector_get_by_name() {
         let selector = SandboxSelector::new();
         assert!(selector.get("native").is_some());
-        assert!(selector.get("docker").is_none());
+        assert!(selector.get("docker").is_some());
     }
 
     #[test]
