@@ -28,21 +28,22 @@ impl EventHandler {
         std::thread::spawn(move || {
             loop {
                 // Poll for events with the tick rate as timeout
-                if event::poll(tick_rate).unwrap_or(false)
-                    && let Ok(evt) = event::read()
-                {
-                    match evt {
-                        Event::Key(key) => {
-                            let _ = event_tx.send(AppEvent::Key(key));
+                if event::poll(tick_rate).unwrap_or(false) {
+                    if let Ok(evt) = event::read() {
+                        match evt {
+                            Event::Key(key) => {
+                                let _ = event_tx.send(AppEvent::Key(key));
+                            }
+                            Event::Resize(w, h) => {
+                                let _ = event_tx.send(AppEvent::Resize(w, h));
+                            }
+                            _ => {}
                         }
-                        Event::Resize(w, h) => {
-                            let _ = event_tx.send(AppEvent::Resize(w, h));
-                        }
-                        _ => {}
                     }
+                } else {
+                    // Only send tick on timeout (no real event received)
+                    let _ = event_tx.send(AppEvent::Tick);
                 }
-                // Send a tick event on timeout
-                let _ = event_tx.send(AppEvent::Tick);
             }
         });
 

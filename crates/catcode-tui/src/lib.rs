@@ -43,6 +43,7 @@ pub async fn run(project_dir: PathBuf) -> anyhow::Result<()> {
 
     // Create a default session
     app.create_session("main");
+    app.add_message(app::MessageRole::System, "Welcome to CatCode! Type a message or use /help for commands.");
 
     // Main event loop
     let result = run_event_loop(&mut terminal, &mut app, &mut event_handler).await;
@@ -191,6 +192,28 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) {
                 app.messages.clear();
                 app.scroll_offset = 0;
                 app.status = format!("Switched to: {}", sessions[prev_idx].name);
+            }
+        }
+        // Left — move cursor left
+        KeyCode::Left if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if app.input_cursor > 0 {
+                let prev = app.input[..app.input_cursor]
+                    .char_indices()
+                    .last()
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                app.input_cursor = prev;
+            }
+        }
+        // Right — move cursor right
+        KeyCode::Right if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if app.input_cursor < app.input.len() {
+                let next = app.input[app.input_cursor..]
+                    .char_indices()
+                    .nth(1)
+                    .map(|(i, _)| app.input_cursor + i)
+                    .unwrap_or(app.input.len());
+                app.input_cursor = next;
             }
         }
         // Page Up — scroll up

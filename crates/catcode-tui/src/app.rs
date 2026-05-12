@@ -249,10 +249,10 @@ impl App {
         match self.input_mode {
             InputMode::Normal => {
                 self.input.insert(self.input_cursor, c);
-                self.input_cursor += 1;
+                self.input_cursor += c.len_utf8();
             }
             InputMode::Command => {
-                self.command_input.insert(self.command_input.len(), c);
+                self.command_input.push(c);
             }
         }
     }
@@ -262,8 +262,14 @@ impl App {
         match self.input_mode {
             InputMode::Normal => {
                 if self.input_cursor > 0 {
-                    self.input_cursor -= 1;
-                    self.input.remove(self.input_cursor);
+                    // Find the previous char boundary
+                    let prev = self.input[..self.input_cursor]
+                        .char_indices()
+                        .last()
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
+                    self.input_cursor = prev;
+                    self.input.remove(prev);
                 }
             }
             InputMode::Command => {
@@ -286,10 +292,12 @@ impl App {
                 Some(text)
             }
             InputMode::Command => {
-                let cmd = self.command_input.clone();
+                let cmd = self.command_input.trim().to_string();
                 self.command_input.clear();
                 self.input_mode = InputMode::Normal;
-                self.execute_command(&cmd);
+                if !cmd.is_empty() {
+                    self.execute_command(&cmd);
+                }
                 None
             }
         }
@@ -799,6 +807,18 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_char_unicode() {
+        let mut app = make_app();
+        app.handle_char('你');
+        assert_eq!(app.input, "你");
+        assert_eq!(app.input_cursor, 3); // '你' is 3 bytes in UTF-8
+
+        app.handle_char('好');
+        assert_eq!(app.input, "你好");
+        assert_eq!(app.input_cursor, 6); // '好' is also 3 bytes
+    }
+
+    #[test]
     fn test_handle_backspace() {
         let mut app = make_app();
         app.handle_char('a');
@@ -806,6 +826,22 @@ mod tests {
         app.handle_backspace();
         assert_eq!(app.input, "a");
         assert_eq!(app.input_cursor, 1);
+    }
+
+    #[test]
+    fn test_handle_backspace_unicode() {
+        let mut app = make_app();
+        app.handle_char('你');
+        app.handle_char('好');
+        assert_eq!(app.input_cursor, 6);
+
+        app.handle_backspace();
+        assert_eq!(app.input, "你");
+        assert_eq!(app.input_cursor, 3);
+
+        app.handle_backspace();
+        assert!(app.input.is_empty());
+        assert_eq!(app.input_cursor, 0);
     }
 
     #[test]
@@ -849,6 +885,26 @@ mod tests {
         app.command_input = "quit".to_string();
         app.submit_input();
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_empty_command_does_nothing() {
+        let mut app = make_app();
+        app.enter_command_mode();
+        app.command_input = "".to_string();
+        app.submit_input();
+        assert!(!app.should_quit);
+        assert_eq!(app.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn test_whitespace_only_command_does_nothing() {
+        let mut app = make_app();
+        app.enter_command_mode();
+        app.command_input = "   ".to_string();
+        app.submit_input();
+        assert!(!app.should_quit);
+        assert_eq!(app.input_mode, InputMode::Normal);
     }
 
     #[test]

@@ -346,14 +346,35 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
 
 /// Render the input area.
 fn render_input(f: &mut Frame, app: &App, area: Rect) {
+    let mode_tag = match app.agent_mode {
+        AgentMode::Plan => "Plan",
+        AgentMode::Act => "Act",
+        AgentMode::Auto => "Auto",
+    };
     let (title, style) = match app.input_mode {
-        InputMode::Normal => (" Input ", Style::default().fg(Color::White)),
-        InputMode::Command => (" Command ", Style::default().fg(Color::Yellow)),
+        InputMode::Normal => (
+            format!(" Input [{}] ", mode_tag),
+            Style::default().fg(Color::White),
+        ),
+        InputMode::Command => (" Command ".to_string(), Style::default().fg(Color::Yellow)),
     };
     let command_text = format!("/{}", app.command_input);
     let input_text = match app.input_mode {
         InputMode::Normal => app.input.as_str(),
         InputMode::Command => command_text.as_str(),
+    };
+
+    // Calculate cursor position for the inner area (account for borders)
+    let inner_x = area.x + 1;
+    let inner_y = area.y + 1;
+    let cursor_byte = match app.input_mode {
+        InputMode::Normal => app.input_cursor,
+        InputMode::Command => command_text.len(),
+    };
+    // Convert byte offset to char offset for display
+    let cursor_char = match app.input_mode {
+        InputMode::Normal => app.input[..cursor_byte].chars().count(),
+        InputMode::Command => command_text[..cursor_byte].chars().count(),
     };
 
     let input = Paragraph::new(input_text).style(style).block(
@@ -370,6 +391,13 @@ fn render_input(f: &mut Frame, app: &App, area: Rect) {
     );
 
     f.render_widget(input, area);
+
+    // Show cursor
+    if area.width > 2 && area.height > 2 {
+        let max_x = area.width.saturating_sub(2) as usize;
+        let cursor_x = (inner_x as usize + cursor_char).min(inner_x as usize + max_x);
+        f.set_cursor_position((cursor_x as u16, inner_y));
+    }
 }
 
 /// Render the status bar at the bottom.
