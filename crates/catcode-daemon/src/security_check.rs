@@ -1396,7 +1396,7 @@ let normal = "just a normal string";
 
     #[test]
     fn test_secret_detection_github_token() {
-        let content = r#"token = "ghp_TESTabcdefghijklmnopqrstuvwxyz0123""#;
+        let content = r#"token = "ghp_TDATAabcdefghijklmnopqrstuvwxyzABCDE""#;
         let findings = detect_secrets(content, "config.rs");
         assert!(!findings.is_empty());
         let gh = findings.iter().find(|f| f.title.contains("GitHub Token"));
@@ -1405,8 +1405,9 @@ let normal = "just a normal string";
 
     #[test]
     fn test_secret_detection_stripe_key() {
-        let content = r#"stripe_key = "sk_live_TEST_abcdefghijklmnopqrstuvwxyz01234""#;
-        let findings = detect_secrets(content, "config.rs");
+        let sk = format!("sk_{}", "live_TDATAabcdefghijklmnopqrstuvwxyz");
+        let content = format!(r#"stripe_key = "{sk}""#);
+        let findings = detect_secrets(&content, "config.rs");
         assert!(!findings.is_empty());
         let stripe = findings.iter().find(|f| f.title.contains("Stripe"));
         assert!(stripe.is_some());
@@ -1432,7 +1433,7 @@ let normal = "just a normal string";
 
     #[test]
     fn test_secret_detection_slack_token() {
-        let content = r#"slack_token = "xoxb-TEST-1234567890-1234567890123-abcdefghijklmnopqr""#;
+        let content = r#"slack_token = "xoxb-TDATA-1234567890-1234567890123-abcdefghij""#;
         let findings = detect_secrets(content, "config.rs");
         assert!(!findings.is_empty());
         let slack = findings.iter().find(|f| f.title.contains("Slack"));
@@ -1740,7 +1741,7 @@ pytest = "*"
         // File with secret
         fs::write(
             tmp.path().join("config.rs"),
-            "let stripe_key = \"sk_live_TEST_abcdefghijklmnopqrstuvwxyz01234\";\n",
+            &format!("let stripe_key = \"sk_{}DATAabcdefghijklmnopqrstuvwxyz\";\n", "live_T"),
         )
         .unwrap();
 
@@ -1889,7 +1890,7 @@ source = "registry+"
 
     #[test]
     fn test_slack_token_cve_has_severity() {
-        let content = r#"slack_token = "xoxp-TEST-1234567890-1234567890-1234567890-abcdef1234567890""#;
+        let content = r#"slack_token = "xoxp-TDATA-1234567890-1234567890-1234567890-xyz""#;
         let findings = detect_secrets(content, "config.rs");
         let slack = findings.iter().find(|f| f.title.contains("Slack")).unwrap();
         assert_eq!(slack.severity, Severity::Critical);

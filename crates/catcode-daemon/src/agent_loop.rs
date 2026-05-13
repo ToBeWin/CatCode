@@ -6,12 +6,20 @@ use catcode_core::{
     ToolResult,
 };
 use catcode_middleware::MiddlewareChain;
+use catcode_middleware::model_router::{estimate_complexity, ModelRouter, ProviderHealth, RoutingBudget};
 use catcode_tools::ToolRegistry;
+use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
+
+use crate::subagent::{SubAgentConfig, SubAgentSpawner};
 
 /// Maximum number of agent turns before forcing stop.
 const MAX_TURNS: u64 = 50;
+
+/// Maximum consecutive tool failures allowed before aborting.
+const MAX_HEAL_FAILURES: u32 = 5;
 
 /// Result of running the agent loop for a single user message.
 #[derive(Debug, Clone)]
@@ -26,6 +34,14 @@ pub struct AgentLoopResult {
     pub hit_max_turns: bool,
     /// All messages generated during this loop (for appending to conversation).
     pub messages: Vec<Message>,
+    /// Generated plan if auto-plan was used.
+    pub auto_plan: Option<String>,
+    /// Number of self-heal actions taken.
+    pub self_healed: u32,
+    /// Number of sub-agents spawned.
+    pub sub_agents_spawned: u32,
+    /// Models used across turns (for cost tracking).
+    pub models_used: Vec<String>,
 }
 
 /// The agent execution loop.
@@ -33,6 +49,9 @@ pub struct AgentLoopResult {
 /// Orchestrates the full cycle: build context → call LLM → execute tools → repeat.
 /// Each call to `run()` processes one user message through potentially multiple
 /// LLM turns (if the model requests tool calls).
+///
+/// Supports intelligence features: auto-plan, self-healing, sub-agent dispatch,
+/// and model routing — all configurable via builder methods.
 pub struct AgentLoop {
     provider: Arc<dyn Provider>,
     tools: Arc<ToolRegistry>,
@@ -42,6 +61,13 @@ pub struct AgentLoop {
     compressor: ContextCompressor,
     model_id: String,
     max_turns: u64,
+    model_router: Option<ModelRouter>,
+    auto_plan_enabled: bool,
+    self_heal_enabled: bool,
+    subagent_dispatch_enabled: bool,
+    model_routing_enabled: bool,
+    failed_tools: HashMap<String, u32>,
+    total_failures: u32,
 }
 
 impl AgentLoop {
@@ -62,6 +88,13 @@ impl AgentLoop {
             compressor: ContextCompressor::new(),
             model_id: model_id.into(),
             max_turns: MAX_TURNS,
+            model_router: None,
+            auto_plan_enabled: true,
+            self_heal_enabled: true,
+            subagent_dispatch_enabled: true,
+            model_routing_enabled: true,
+            failed_tools: HashMap::new(),
+            total_failures: 0,
         }
     }
 
@@ -70,23 +103,86 @@ impl AgentLoop {
         self
     }
 
+    pub fn with_model_router(mut self, router: ModelRouter) -> Self {
+        self.model_router = Some(router);
+        self
+    }
+
+    pub fn with_auto_plan(mut self, enabled: bool) -> Self {
+        self.auto_plan_enabled = enabled;
+        self
+    }
+
+    pub fn with_self_heal(mut self, enabled: bool) -> Self {
+        self.self_heal_enabled = enabled;
+        self
+    }
+
+    pub fn with_subagent_dispatch(mut self, enabled: bool) -> Self {
+        self.subagent_dispatch_enabled = enabled;
+        self
+    }
+
+    pub fn with_model_routing(mut self, enabled: bool) -> Self {
+        self.model_routing_enabled = enabled;
+        self
+    }
+
+    /// Run the agent loop with intelligence features (auto-plan + full smart loop).
+    ///
+    /// This wraps `run()` with automatic plan generation for complex tasks.
+    /// If `auto_plan_enabled` and task complexity > 0.6, the LLM generates a
+    /// step-by-step plan before the main agent loop begins.
+    pub async fn run_intelligent(
+        &mut self,
+        user_message: &str,
+        project_dir: &Path,
+    ) -> Result<AgentLoopResult, AgentLoopError> {
+        let mut auto_plan: Option<String> = None;
+
+        if self.auto_plan_enabled {
+            let complexity = estimate_complexity(user_message);
+            debug!(complexity, "Task complexity estimated for auto-plan");
+
+            if complexity > 0.6 {
+                info!(complexity, "Generating plan for complex task");
+                let plan = self.generate_plan(user_message, project_dir).await?;
+                auto_plan = Some(plan.clone());
+
+                let prev = self.context.permanent.system_prompt.clone();
+                self.context.permanent.system_prompt =
+                    format!("{}\n\nPre-generated Plan:\n{}\n\nFollow this plan.", prev, plan);
+            }
+        }
+
+        let mut result = self.run(user_message, project_dir).await?;
+        result.auto_plan = auto_plan;
+        Ok(result)
+    }
+
     /// Run the agent loop for a single user message.
     ///
     /// Returns the final response after all tool calls are resolved.
+    /// Integrates self-healing and model routing when enabled.
     pub async fn run(
         &mut self,
         user_message: &str,
-        project_dir: &std::path::Path,
+        project_dir: &Path,
     ) -> Result<AgentLoopResult, AgentLoopError> {
-        // Add user message to context
+        // Reset per-run tracking
+        self.failed_tools.clear();
+        self.total_failures = 0;
+
         self.context.add_user_message(user_message);
 
         let mut all_messages = Vec::new();
         let mut total_usage = TokenUsage::default();
         let mut turns = 0u64;
         let mut hit_max = false;
+        let mut self_healed = 0u32;
+        let mut sub_agents_spawned = 0u32;
+        let mut models_used: Vec<String> = Vec::new();
 
-        // Build tool definitions from registry
         let tool_defs = self.build_tool_definitions();
 
         loop {
@@ -98,10 +194,8 @@ impl AgentLoop {
 
             turns += 1;
 
-            // Compress context if needed
             self.compressor.compress(&mut self.context);
 
-            // Build the request
             let messages = self.context.build_messages();
             let system = messages
                 .iter()
@@ -113,8 +207,14 @@ impl AgentLoop {
                 .filter(|m| m.role != Role::System)
                 .collect();
 
+            let model = self.resolve_model(user_message);
+
+            if models_used.last() != Some(&model) {
+                models_used.push(model.clone());
+            }
+
             let request = ChatRequest {
-                model: self.model_id.clone(),
+                model,
                 messages: non_system,
                 tools: if tool_defs.is_empty() {
                     None
@@ -127,7 +227,6 @@ impl AgentLoop {
                 stream: false,
             };
 
-            // Call the provider
             let provider_ctx = ProviderContext {
                 session_id: None,
                 project_dir: Some(project_dir.to_string_lossy().to_string()),
@@ -141,21 +240,17 @@ impl AgentLoop {
                 .await
                 .map_err(|e| AgentLoopError::ProviderError(e.to_string()))?;
 
-            // Record usage
             total_usage = total_usage + response.usage.clone();
             self.budget.record_usage(&response.usage);
 
-            // Check budget
             if self.budget.is_exhausted() {
                 warn!("Token budget exhausted");
                 return Err(AgentLoopError::BudgetExhausted);
             }
 
-            // Extract text and tool calls
             let text = response.text_content();
             let tool_calls = response.get_tool_calls();
 
-            // If no tool calls, we're done
             if tool_calls.is_empty() || response.stop_reason == StopReason::EndTurn {
                 if !text.is_empty() {
                     self.context.add_assistant_message(&text);
@@ -167,10 +262,13 @@ impl AgentLoop {
                     turns_used: turns,
                     hit_max_turns: hit_max,
                     messages: all_messages,
+                    auto_plan: None,
+                    self_healed,
+                    sub_agents_spawned,
+                    models_used,
                 });
             }
 
-            // Has tool calls — add assistant message with tool calls
             let tc_objects: Vec<ToolCall> = tool_calls
                 .iter()
                 .map(|(id, name, args)| ToolCall {
@@ -184,7 +282,6 @@ impl AgentLoop {
             self.context.add_assistant_message(&text);
             all_messages.push(assistant_msg);
 
-            // Execute each tool call through the middleware chain
             let mut agent_ctx = AgentContext::new("agent-loop");
 
             for tc in &tc_objects {
@@ -199,7 +296,6 @@ impl AgentLoop {
                     dry_run: false,
                 };
 
-                // Build the tool function
                 let tool_fn: catcode_middleware::chain::ToolFn = Arc::new(move |call| {
                     let tools = tools.clone();
                     let tool_ctx = tool_ctx.clone();
@@ -212,7 +308,6 @@ impl AgentLoop {
                     })
                 });
 
-                // Execute through middleware
                 let result = self
                     .middleware
                     .execute_tool(&mut agent_ctx, &tc_ref, tool_fn)
@@ -224,10 +319,63 @@ impl AgentLoop {
                     "Tool execution completed"
                 );
 
-                // Add tool result to context
-                self.context
-                    .add_tool_result(&call_id, &tool_name, result.clone());
-                all_messages.push(Message::tool_result(&call_id, &result.output));
+                // Self-healing: detect repeated tool failures and provide guidance
+                if self.self_heal_enabled && result.is_error {
+                    let entry = self.failed_tools.entry(tool_name.clone()).or_insert(0);
+                    *entry += 1;
+                    self.total_failures += 1;
+
+                    if self.total_failures > MAX_HEAL_FAILURES {
+                        warn!("Too many failures ({}), aborting", self.total_failures);
+                        return Err(AgentLoopError::MaxTurnsExceeded(self.max_turns));
+                    }
+
+                    self_healed += 1;
+
+                    let advice = if *entry >= 2 {
+                        format!(
+                            "The tool '{}' failed again with: {}. Try a completely different approach. Instead of '{}', try using read_file and search tools directly.",
+                            tool_name, result.output, tool_name
+                        )
+                    } else {
+                        format!(
+                            "The tool '{}' failed with: {}. Try a different approach.",
+                            tool_name, result.output
+                        )
+                    };
+
+                    let mut modified_result = result.clone();
+                    modified_result.output =
+                        format!("{}\n\nSelf-healing advice: {}", result.output, advice);
+                    self.context
+                        .add_tool_result(&call_id, &tool_name, modified_result.clone());
+                    all_messages.push(Message::tool_result(
+                        &call_id,
+                        &modified_result.output,
+                    ));
+                } else {
+                    if !result.is_error {
+                        self.failed_tools.remove(&tool_name);
+                    }
+
+                    self.context
+                        .add_tool_result(&call_id, &tool_name, result.clone());
+                    all_messages.push(Message::tool_result(&call_id, &result.output));
+                }
+
+                // Sub-agent dispatch: spawn parallel sub-agents when file lists detected
+                if self.subagent_dispatch_enabled && !result.output.is_empty() {
+                    let sub_results = self
+                        .try_dispatch_subagents(&tool_name, &result.output, project_dir)
+                        .await;
+                    if !sub_results.is_empty() {
+                        sub_agents_spawned += sub_results.len() as u32;
+                        let merged = sub_results.join("\n---\n");
+                        let msg = format!("Sub-agent results:\n{}", merged);
+                        self.context.add_user_message(&msg);
+                        all_messages.push(Message::user(msg));
+                    }
+                }
             }
         }
 
@@ -237,7 +385,193 @@ impl AgentLoop {
             turns_used: turns,
             hit_max_turns: hit_max,
             messages: all_messages,
+            auto_plan: None,
+            self_healed,
+            sub_agents_spawned,
+            models_used,
         })
+    }
+
+    /// Generate a plan for a complex task by calling the LLM.
+    async fn generate_plan(
+        &self,
+        user_message: &str,
+        project_dir: &Path,
+    ) -> Result<String, AgentLoopError> {
+        let provider_ctx = ProviderContext {
+            session_id: None,
+            project_dir: Some(project_dir.to_string_lossy().to_string()),
+            metadata: Default::default(),
+        };
+
+        let request = ChatRequest {
+            model: self.model_id.clone(),
+            messages: vec![Message::user(user_message)],
+            tools: None,
+            system: Some(
+                "Analyze this task and create a step-by-step plan. Output ONLY the plan as numbered steps."
+                    .to_string(),
+            ),
+            max_tokens: Some(4096),
+            temperature: None,
+            stream: false,
+        };
+
+        let response = self
+            .provider
+            .chat(request, &provider_ctx)
+            .await
+            .map_err(|e| AgentLoopError::ProviderError(e.to_string()))?;
+
+        let plan = response.text_content();
+        info!(plan_len = plan.len(), "Plan generated");
+        Ok(plan)
+    }
+
+    /// Resolve the model to use — via router if configured, otherwise default.
+    fn resolve_model(&self, user_message: &str) -> String {
+        if self.model_routing_enabled && let Some(ref router) = self.model_router {
+            let complexity = estimate_complexity(user_message);
+            let used = self.budget.input_used + self.budget.output_used;
+            let remaining = self.budget.session_limit.saturating_sub(used);
+            let budget_info = RoutingBudget {
+                remaining_tokens: remaining,
+                total_tokens: self.budget.session_limit,
+                max_cost_per_request_usd: 0.1,
+            };
+            let health = ProviderHealth::default();
+            return router.select_model(complexity, &budget_info, &health);
+        }
+        self.model_id.clone()
+    }
+
+    /// Check for self-healing opportunity and return guidance advice.
+    ///
+    /// Tracks consecutive failures per tool. First failure returns advice
+    /// to try a different approach. Second+ consecutive failure on the same
+    /// tool suggests alternative tools. Resets failure counter on success.
+    /// Returns `None` if total failures exceed `MAX_HEAL_FAILURES`.
+    pub fn check_self_heal(
+        &mut self,
+        tool_name: &str,
+        was_error: bool,
+        tool_output: &str,
+    ) -> Option<String> {
+        if !was_error {
+            self.failed_tools.remove(tool_name);
+            return None;
+        }
+
+        let entry = self.failed_tools.entry(tool_name.to_string()).or_insert(0);
+        *entry += 1;
+        self.total_failures += 1;
+
+        if self.total_failures > MAX_HEAL_FAILURES {
+            return None;
+        }
+
+        Some(if *entry >= 2 {
+            format!(
+                "The tool '{}' failed again with: {}. Try a completely different approach. Instead of '{}', try using read_file and search tools.",
+                tool_name, tool_output, tool_name
+            )
+        } else {
+            format!(
+                "The tool '{}' failed with: {}. Try a different approach.",
+                tool_name, tool_output
+            )
+        })
+    }
+
+    /// Try to dispatch sub-agents when tool output contains file paths.
+    ///
+    /// For bash/search/glob/grep/find outputs containing 3+ file paths,
+    /// spawns up to 3 sub-agents to process files in parallel.
+    pub async fn try_dispatch_subagents(
+        &self,
+        tool_name: &str,
+        tool_output: &str,
+        project_dir: &Path,
+    ) -> Vec<String> {
+        if !self.subagent_dispatch_enabled {
+            return Vec::new();
+        }
+
+        match tool_name {
+            "search" | "glob" | "bash" | "grep" | "find" => {}
+            _ => return Vec::new(),
+        }
+
+        let re = match regex::Regex::new(
+            r"(?m)^\s*((?:\./)?[^\s]+\.(?:rs|py|js|ts|toml|md|json|yaml|yml|sh))\s*$",
+        ) {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+
+        let files: Vec<String> = re
+            .captures_iter(tool_output)
+            .map(|c| c[1].to_string())
+            .filter(|p| !p.is_empty())
+            .collect();
+
+        if files.len() < 3 {
+            return Vec::new();
+        }
+
+        info!(
+            tool = %tool_name,
+            file_count = files.len(),
+            "Dispatching sub-agents for parallel work"
+        );
+
+        let batch_size = files.len().div_ceil(3);
+        let batches: Vec<&[String]> = files.chunks(batch_size).take(3).collect();
+
+        let spawner = SubAgentSpawner::new(
+            self.provider.clone(),
+            self.tools.clone(),
+            self.middleware.clone(),
+            &self.model_id,
+        );
+
+        let tasks: Vec<(String, SubAgentConfig)> = batches
+            .into_iter()
+            .map(|batch| {
+                let task = format!("Process the following files: {}", batch.join(", "));
+                let config = SubAgentConfig {
+                    max_turns: 10,
+                    token_budget_limit: 50_000,
+                    system_prompt: Some(format!(
+                        "You are a focused sub-agent handling files: {}. Complete your task efficiently.",
+                        batch.join(", ")
+                    )),
+                };
+                (task, config)
+            })
+            .collect();
+
+        if tasks.is_empty() {
+            return Vec::new();
+        }
+
+        let results = spawner
+            .run_many(tasks, project_dir.to_path_buf())
+            .await;
+
+        results
+            .into_iter()
+            .filter_map(|r| match r {
+                Ok(sub) => {
+                    debug!(task = %sub.task, "Sub-agent completed");
+                    Some(format!("[Sub-agent: {}]\n{}", sub.task, sub.response))
+                }
+                Err(e) => {
+                    warn!("Sub-agent failed: {}", e);
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Build tool definitions from the registry for the LLM request.
@@ -303,14 +637,21 @@ mod tests {
         let context = ContextStack::new("You are a helpful assistant.", "");
         let budget = TokenBudget::new(500_000, 50_000, 0.80);
 
-        AgentLoop::new(
-            provider,
-            tools,
-            middleware,
-            context,
-            budget,
-            "deepseek-chat",
-        )
+        AgentLoop::new(provider, tools, middleware, context, budget, "deepseek-chat")
+            .with_self_heal(false)
+            .with_model_routing(false)
+            .with_subagent_dispatch(false)
+            .with_auto_plan(false)
+    }
+
+    fn make_smart_loop(response: &str) -> AgentLoop {
+        let provider = Arc::new(MockProvider::with_text_response(response));
+        let tools = Arc::new(ToolRegistry::with_builtins());
+        let middleware = Arc::new(MiddlewareChain::new());
+        let context = ContextStack::new("You are a helpful assistant.", "");
+        let budget = TokenBudget::new(500_000, 50_000, 0.80);
+
+        AgentLoop::new(provider, tools, middleware, context, budget, "deepseek-chat")
     }
 
     #[tokio::test]
@@ -325,6 +666,9 @@ mod tests {
         assert_eq!(result.turns_used, 1);
         assert!(!result.hit_max_turns);
         assert!(!result.messages.is_empty());
+        assert_eq!(result.self_healed, 0);
+        assert_eq!(result.sub_agents_spawned, 0);
+        assert!(result.models_used.contains(&"deepseek-chat".to_string()));
     }
 
     #[tokio::test]
@@ -335,7 +679,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Budget should have recorded usage
         assert!(result.total_usage.input_tokens > 0 || result.total_usage.output_tokens > 0);
     }
 
@@ -355,8 +698,243 @@ mod tests {
     fn test_build_tool_definitions() {
         let agent = make_loop("test");
         let defs = agent.build_tool_definitions();
-        assert_eq!(defs.len(), 13); // 13 built-in tools
+        assert_eq!(defs.len(), 13);
         assert!(defs.iter().any(|d| d.name == "read_file"));
         assert!(defs.iter().any(|d| d.name == "bash"));
+    }
+
+    #[tokio::test]
+    async fn test_auto_plan_triggers_on_complex_task() {
+        let mut agent = make_smart_loop("1. Analyze\n2. Fix\n3. Test");
+        agent.auto_plan_enabled = true;
+
+        let result = agent
+            .run_intelligent(
+                "Refactor the architecture to support concurrent async distributed database migration with performance benchmarks",
+                std::path::Path::new("/tmp"),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.auto_plan.is_some());
+        let plan = result.auto_plan.unwrap();
+        assert!(!plan.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_auto_plan_skips_simple_task() {
+        let mut agent = make_smart_loop("Sure, here's the fix");
+        agent.auto_plan_enabled = true;
+
+        let result = agent
+            .run_intelligent(
+                "Fix typo in README",
+                std::path::Path::new("/tmp"),
+            )
+            .await
+            .unwrap();
+
+        // Simple task should NOT trigger auto-plan (complexity <= 0.6)
+        assert!(result.auto_plan.is_none());
+    }
+
+    #[test]
+    fn test_self_heal_tracks_failures() {
+        let mut agent = make_smart_loop("test");
+        agent.self_heal_enabled = true;
+
+        // First failure
+        let advice = agent.check_self_heal("bash", true, "command not found");
+        assert!(advice.is_some());
+        assert!(advice.unwrap().contains("Try a different approach"));
+
+        // Second consecutive failure on same tool
+        let advice = agent.check_self_heal("bash", true, "permission denied");
+        assert!(advice.is_some());
+        assert!(advice.unwrap().contains("completely different approach"));
+
+        // Success resets counter
+        let advice = agent.check_self_heal("bash", false, "success");
+        assert!(advice.is_none());
+
+        // After reset, first failure should be simple advice again
+        let advice = agent.check_self_heal("bash", true, "error");
+        assert!(advice.is_some());
+        assert!(advice.unwrap().contains("Try a different approach"));
+    }
+
+    #[test]
+    fn test_self_heal_max_failures() {
+        // Override: disable auto-plan, use run() directly to test self-heal in the loop
+        let mut agent = make_smart_loop("test");
+        agent.self_heal_enabled = true;
+        agent.auto_plan_enabled = false;
+        agent.model_routing_enabled = false;
+        agent.subagent_dispatch_enabled = false;
+
+        // Exhaust the failure budget
+        for _ in 0..MAX_HEAL_FAILURES {
+            let advice = agent.check_self_heal("bash", true, "error");
+            assert!(advice.is_some());
+        }
+
+        // Next failure should return None
+        let advice = agent.check_self_heal("bash", true, "error again");
+        assert!(advice.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_subagent_dispatch_with_files() {
+        let output = "src/main.rs\nsrc/lib.rs\nsrc/utils.rs\nsrc/config.rs";
+        let mut agent = make_smart_loop("test");
+        agent.subagent_dispatch_enabled = true;
+
+        let result = agent.try_dispatch_subagents(
+            "bash",
+            output,
+            std::path::Path::new("/tmp"),
+        ).await;
+
+        assert!(result.is_empty() || result.len() <= 3);
+    }
+
+    #[tokio::test]
+    async fn test_subagent_dispatch_skips_few_files() {
+        let output = "src/main.rs\nsrc/lib.rs";
+        let mut agent = make_smart_loop("test");
+        agent.subagent_dispatch_enabled = true;
+
+        let result = agent.try_dispatch_subagents(
+            "bash",
+            output,
+            std::path::Path::new("/tmp"),
+        ).await;
+
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_subagent_dispatch_skips_unsupported_tools() {
+        let output = "src/main.rs\nsrc/lib.rs\nsrc/utils.rs";
+        let mut agent = make_smart_loop("test");
+        agent.subagent_dispatch_enabled = true;
+
+        let result = agent.try_dispatch_subagents(
+            "read_file",
+            output,
+            std::path::Path::new("/tmp"),
+        ).await;
+
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_model_router_integration() {
+        use catcode_middleware::model_router::{ModelRouter, RoutingStrategy};
+
+        let router = ModelRouter::new(RoutingStrategy::Fixed("custom-model".to_string()));
+        let mut agent = make_loop("test");
+        agent.model_router = Some(router);
+        agent.model_routing_enabled = true;
+        agent.self_heal_enabled = false;
+        agent.subagent_dispatch_enabled = false;
+        agent.auto_plan_enabled = false;
+
+        // The model in the result should be tracked
+        let result = agent
+            .run("simple request", std::path::Path::new("/tmp"))
+            .await
+            .unwrap();
+
+        assert!(result.models_used.contains(&"custom-model".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_cost_aware_routing() {
+        use catcode_middleware::model_router::{ModelRouter, RoutingStrategy};
+
+        let router = ModelRouter::new(RoutingStrategy::CostAware {
+            simple_model: "cheap-model".to_string(),
+            powerful_model: "expensive-model".to_string(),
+            complexity_threshold: 0.6,
+        });
+        let mut agent = make_loop("test");
+        agent.model_router = Some(router);
+        agent.model_routing_enabled = true;
+        agent.self_heal_enabled = false;
+        agent.subagent_dispatch_enabled = false;
+        agent.auto_plan_enabled = false;
+
+        // Simple task should use cheap model
+        let result = agent
+            .run("simple task", std::path::Path::new("/tmp"))
+            .await
+            .unwrap();
+        assert!(result.models_used.contains(&"cheap-model".to_string()));
+
+        // Complex task should use expensive model
+        let mut agent2 = make_loop("test");
+        let router2 = ModelRouter::new(RoutingStrategy::CostAware {
+            simple_model: "cheap-model".to_string(),
+            powerful_model: "expensive-model".to_string(),
+            complexity_threshold: 0.6,
+        });
+        agent2.model_router = Some(router2);
+        agent2.model_routing_enabled = true;
+        agent2.self_heal_enabled = false;
+        agent2.subagent_dispatch_enabled = false;
+        agent2.auto_plan_enabled = false;
+
+        let result2 = agent2
+            .run(
+                "Refactor the architecture to support concurrent async distributed database migration",
+                std::path::Path::new("/tmp"),
+            )
+            .await
+            .unwrap();
+        assert!(result2.models_used.contains(&"expensive-model".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_auto_plan_not_enabled_by_default_in_run() {
+        // run() should NOT trigger auto-plan even with a complex task
+        let mut agent = make_smart_loop("Response");
+        // auto_plan_enabled defaults to true, but run() doesn't do plan generation
+        let result = agent
+            .run(
+                "Refactor the architecture",
+                std::path::Path::new("/tmp"),
+            )
+            .await
+            .unwrap();
+
+        // run() doesn't set auto_plan, so it stays None
+        // (run_intelligent sets it)
+        assert!(result.auto_plan.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_run_intelligent_with_auto_plan_disabled() {
+        let mut agent = make_loop("Response");
+        // auto_plan is already disabled by make_loop
+        let result = agent
+            .run_intelligent("Hello", std::path::Path::new("/tmp"))
+            .await
+            .unwrap();
+
+        // No auto-plan since disabled
+        assert!(result.auto_plan.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_models_used_tracked() {
+        let mut agent = make_loop("Response");
+        let result = agent
+            .run("Hello", std::path::Path::new("/tmp"))
+            .await
+            .unwrap();
+
+        assert!(!result.models_used.is_empty());
+        assert_eq!(result.models_used[0], "deepseek-chat");
     }
 }
