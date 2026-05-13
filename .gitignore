@@ -4,3 +4,7 @@
 *.swp
 *.swo
 .catcode/
+
+# SWE-Bench results
+swe-bench-results/
+swe-bench-lite.json

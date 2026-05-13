@@ -7,6 +7,10 @@ edition.workspace = true
 name = "catcode-daemon"
 path = "src/main.rs"
 
+[[bin]]
+name = "catcode-swe-bench"
+path = "src/bin/swe_bench.rs"
+
 [dependencies]
 catcode-core = { path = "../catcode-core" }
 catcode-provider = { path = "../catcode-provider" }
@@ -29,6 +33,7 @@ sqlx = { workspace = true }
 regex = { workspace = true }
 lru = { workspace = true }
 futures = { workspace = true }
+clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 async-trait = { workspace = true }
