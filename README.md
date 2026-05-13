@@ -248,6 +248,48 @@ GET    /api/v1/events            # SSE event stream
 GET    /api/v1/ws                # WebSocket
 ```
 
+## Mobile / IM 集成
+
+CatCode 通过 **cc-connect** 桥接到即时通讯平台，无需开发独立 App，无需公网服务器。
+
+```
+钉钉 / 飞书 / 企微 / Telegram / Discord / Slack / QQ / LINE
+                ↓  出站 WebSocket/长轮询（无需公网IP）
+          cc-connect (本地网桥)
+                ↓  HTTP API
+      catcode-daemon (REST API :7070)
+```
+
+### 快速开始
+
+```bash
+# 1. 安装 cc-connect
+npm install -g cc-connect
+
+# 2. 终端1：启动 CatCode daemon
+cargo run -p catcode-daemon
+
+# 3. 终端2：复制配置并启动 cc-connect
+cp cc-connect.toml.example catcode-cc-connect.toml
+# 编辑配置，填入 IM 平台凭证
+cc-connect -config catcode-cc-connect.toml
+```
+
+### 支持的平台
+
+| 平台 | 连接方式 | 公网IP | 配置指南 |
+|------|---------|--------|---------|
+| 飞书 | WebSocket | ❌ | 见 cc-connect.toml.example |
+| 钉钉 | Stream Mode | ❌ | 见 cc-connect.toml.example |
+| Telegram | Long Polling | ❌ | 见 cc-connect.toml.example |
+| Discord | Gateway | ❌ | 见 cc-connect.toml.example |
+| Slack | Socket Mode | ❌ | 见 cc-connect.toml.example |
+| 企业微信 | WebSocket | ❌ | 见 cc-connect.toml.example |
+| 个人微信 | ilink 长轮询 | ❌ | 见 cc-connect.toml.example |
+| QQ | WebSocket | ❌ | 见 cc-connect.toml.example |
+
+详细配置请参考 `cc-connect.toml.example` 和 `scripts/catcode-agent.sh`。
+
 ## Skills System
 
 Skills are TOML-defined capability bundles that auto-inject system prompts, rules, and hooks. See `skills/` directory:

@@ -15,6 +15,11 @@
 - All write operations must be recorded in audit_log
 - Token usage must be recorded after every API call
 
+### Architecture Decisions
+- **Sandbox**: NativeSandbox only (path checks + timeout + truncation). No Docker.
+- **IM/Mobile**: No native mobile app or IM SDK. Use cc-connect as local bridge (covers Feishu, DingTalk, WeChat Work, Weixin, Telegram, Discord, Slack, QQ, LINE).
+- **No server required**: CatCode + cc-connect both run locally; IM platforms connect via outbound WebSocket/long-polling.
+
 ### Development Workflow
 1. Run `cargo check` after any code change
 2. Run `cargo test` before committing

@@ -1,0 +1,92 @@
+# =============================================================================
+# cc-connect + CatCode 集成配置示例
+#
+# 使用方式:
+#   1. 安装 cc-connect: npm install -g cc-connect
+#   2. 在终端 1 中启动 CatCode daemon: cargo run -p catcode-daemon
+#   3. 在终端 2 中启动 cc-connect:  cp cc-connect.toml.example cc-connect.toml && cc-connect
+#
+# 详细文档: scripts/catcode-agent.sh
+# =============================================================================
+
+[log]
+level = "info"
+
+# =============================================================================
+# Project: CatCode Agent
+# =============================================================================
+[[projects]]
+name = "catcode"
+
+# 通过 shell 脚本适配器调用 CatCode daemon API
+# 脚本路径请改为你本地的实际路径
+[projects.agent]
+type = "custom"
+command = "/path/to/CatCode/scripts/catcode-agent.sh"
+
+[projects.agent.options]
+work_dir = "/path/to/your/project"
+mode = "default"
+
+# =============================================================================
+# IM 平台配置（按需取消注释并填入凭证）
+# 以下所有平台均无需公网 IP
+# =============================================================================
+
+# --- 飞书 ---
+# 1. 在 https://open.feishu.cn 创建应用，开启机器人能力
+# 2. 添加 im.message.receive_v1 事件，选择 WebSocket 长连接
+# 3. 填入 app_id 和 app_secret
+# [[projects.platforms]]
+# type = "feishu"
+# [projects.platforms.options]
+# app_id = "your-feishu-app-id"
+# app_secret = "your-feishu-app-secret"
+# allow_from = "*"
+
+# --- 钉钉 ---
+# 1. 在 https://open-dev.dingtalk.com 创建应用
+# 2. 开启机器人能力，选择 Stream 模式
+# 3. 填入 client_id 和 client_secret
+# [[projects.platforms]]
+# type = "dingtalk"
+# [projects.platforms.options]
+# client_id = "your-dingtalk-client-id"
+# client_secret = "your-dingtalk-client-secret"
+# allow_from = "*"
+
+# --- Telegram ---
+# 1. 找 @BotFather 创建机器人
+# 2. 填入 token
+# [[projects.platforms]]
+# type = "telegram"
+# [projects.platforms.options]
+# token = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+# allow_from = "*"
+
+# --- Discord ---
+# [[projects.platforms]]
+# type = "discord"
+# [projects.platforms.options]
+# bot_token = "your-discord-bot-token"
+
+# --- Slack (Socket Mode) ---
+# [[projects.platforms]]
+# type = "slack"
+# [projects.platforms.options]
+# bot_token = "xoxb-..."
+# app_token = "xapp-..."
+
+# --- 企业微信 ---
+# [[projects.platforms]]
+# type = "wecom"
+# [projects.platforms.options]
+# corpid = "your-corpid"
+# agentid = "your-agentid"
+# secret = "your-secret"
+
+# --- 个人微信 (ilink) ---
+# [[projects.platforms]]
+# type = "weixin"
+# [projects.platforms.options]
+# # 运行 cc-connect weixin setup 扫码登录
