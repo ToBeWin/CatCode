@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use futures::StreamExt;
 use tracing::{debug, info, warn};
 
 use crate::lsp_diagnostics::DiagnosticRegistry;
@@ -241,7 +242,7 @@ impl AgentLoop {
                 system,
                 max_tokens: Some(4096),
                 temperature: None,
-                stream: false,
+                stream: true,
             };
 
             self.attach_lsp_diagnostics(&mut request);
@@ -253,30 +254,84 @@ impl AgentLoop {
             };
 
             debug!(turn = turns, "Calling provider");
-            let response = self
-                .provider
-                .chat(request, &provider_ctx)
-                .await
-                .map_err(|e| AgentLoopError::ProviderError(e.to_string()))?;
+            let mut response_text = String::new();
+            let mut thinking_text = String::new();
+            let mut tool_calls: Vec<(String, String, serde_json::Value)> = Vec::new();
+            let mut final_usage = TokenUsage::default();
+            let mut final_stop_reason = None;
 
-            total_usage = total_usage + response.usage.clone();
-            self.budget.record_usage(&response.usage);
+            match self.provider.stream_chat(request.clone(), &provider_ctx).await {
+                Ok(mut stream) => {
+                    debug!(turn = turns, "Using streaming for LLM call");
+                    while let Some(chunk_result) = stream.next().await {
+                        let chunk = chunk_result
+                            .map_err(|e| AgentLoopError::ProviderError(e.to_string()))?;
+
+                        if let Some(text) = &chunk.content {
+                            response_text.push_str(text);
+                        }
+                        if let Some(thinking) = &chunk.thinking {
+                            thinking_text.push_str(thinking);
+                        }
+                        if let Some(delta) = &chunk.tool_call_delta {
+                            if let Some(id) = &delta.id {
+                                tool_calls.push((
+                                    id.clone(),
+                                    delta.name.clone().unwrap_or_default(),
+                                    delta.args_delta
+                                        .as_ref()
+                                        .and_then(|a| serde_json::from_str(a).ok())
+                                        .unwrap_or(serde_json::Value::Null),
+                                ));
+                            } else if let Some(args) = &delta.args_delta
+                                && let Some(last) = tool_calls.last_mut()
+                                && last.2.is_null()
+                                && let Ok(val) = serde_json::from_str(args)
+                            {
+                                last.2 = val;
+                            }
+                        }
+                        if let Some(usage) = &chunk.usage {
+                            final_usage = usage.clone();
+                        }
+                        if let Some(reason) = &chunk.stop_reason {
+                            final_stop_reason = Some(reason.clone());
+                        }
+                    }
+                }
+                Err(_) => {
+                    debug!(turn = turns, "Streaming not supported, falling back to non-streaming");
+                    let mut fallback_req = request.clone();
+                    fallback_req.stream = false;
+                    let response = self
+                        .provider
+                        .chat(fallback_req, &provider_ctx)
+                        .await
+                        .map_err(|e| AgentLoopError::ProviderError(e.to_string()))?;
+                    response_text = response.text_content();
+                    tool_calls = response.get_tool_calls();
+                    final_usage = response.usage;
+                    final_stop_reason = Some(response.stop_reason);
+                }
+            }
+
+            total_usage = total_usage + final_usage.clone();
+            self.budget.record_usage(&final_usage);
 
             if self.budget.is_exhausted() {
                 warn!("Token budget exhausted");
                 return Err(AgentLoopError::BudgetExhausted);
             }
 
-            let text = response.text_content();
-            let tool_calls = response.get_tool_calls();
+            let stop_reason = final_stop_reason.unwrap_or(StopReason::EndTurn);
 
-            if tool_calls.is_empty() || response.stop_reason == StopReason::EndTurn {
-                if !text.is_empty() {
-                    self.context.add_assistant_message(&text);
-                    all_messages.push(Message::assistant(&text));
+            if tool_calls.is_empty() || stop_reason == StopReason::EndTurn {
+                if !response_text.is_empty() {
+                    self.context.add_assistant_message(&response_text);
+                    all_messages.push(Message::assistant(&response_text));
                 }
                 return Ok(AgentLoopResult {
-                    response: text,
+                    response: response_text,
                     total_usage,
                     turns_used: turns,
                     hit_max_turns: hit_max,
@@ -297,8 +352,8 @@ impl AgentLoop {
                 })
                 .collect();
 
-            let assistant_msg = Message::assistant_with_tool_calls(&text, tc_objects.clone());
-            self.context.add_assistant_message(&text);
+            let assistant_msg = Message::assistant_with_tool_calls(&response_text, tc_objects.clone());
+            self.context.add_assistant_message(&response_text);
             all_messages.push(assistant_msg);
 
             let tool_ctx = ToolContext {
@@ -311,10 +366,10 @@ impl AgentLoop {
             let executor = StreamingToolExecutor::new(self.tools.clone(), self.middleware.clone());
             let results = executor.execute_batch(&tc_objects, &tool_ctx).await;
 
-            for (call_id, result) in results {
+            for (call_id, result) in &results {
                 let tool_name = tc_objects
                     .iter()
-                    .find(|tc| tc.id == call_id)
+                    .find(|tc| tc.id == *call_id)
                     .map(|tc| tc.name.clone())
                     .unwrap_or_default();
 
@@ -353,9 +408,9 @@ impl AgentLoop {
                     modified_result.output =
                         format!("{}\n\nSelf-healing advice: {}", result.output, advice);
                     self.context
-                        .add_tool_result(&call_id, &tool_name, modified_result.clone());
+                        .add_tool_result(call_id, &tool_name, modified_result.clone());
                     all_messages.push(Message::tool_result(
-                        &call_id,
+                        call_id,
                         &modified_result.output,
                     ));
                 } else {
@@ -364,8 +419,8 @@ impl AgentLoop {
                     }
 
                     self.context
-                        .add_tool_result(&call_id, &tool_name, result.clone());
-                    all_messages.push(Message::tool_result(&call_id, &result.output));
+                        .add_tool_result(call_id, &tool_name, result.clone());
+                    all_messages.push(Message::tool_result(call_id, &result.output));
                 }
 
                 // Sub-agent dispatch: spawn parallel sub-agents when file lists detected
@@ -379,6 +434,23 @@ impl AgentLoop {
                         let msg = format!("Sub-agent results:\n{}", merged);
                         self.context.add_user_message(&msg);
                         all_messages.push(Message::user(msg));
+                    }
+                }
+            }
+
+            // Build/test failure detection and auto-healing
+            if self.self_heal_enabled && self_healed < 3 {
+                for (_, result) in &results {
+                    if let Some(failure_type) = detect_build_failure(&result.output) {
+                        self_healed += 1;
+                        let fix_msg = format!(
+                            "The previous change caused a {} failure. Please analyze the error and fix it:\n\n{}",
+                            failure_type, result.output
+                        );
+                        debug!(failure = %failure_type, "Detected build failure, triggering auto-heal");
+                        self.context.add_user_message(&fix_msg);
+                        all_messages.push(Message::user(fix_msg));
+                        break;
                     }
                 }
             }
@@ -688,9 +760,45 @@ impl AgentLoopError {
     }
 }
 
+/// Detect if tool output indicates a compilation error or test failure.
+///
+/// Returns `Some("compilation")`, `Some("test")`, or `Some("build")` on failure,
+/// or `None` if the output appears clean.
+fn detect_build_failure(output: &str) -> Option<String> {
+    let lower = output.to_lowercase();
+
+    if output.contains("error[") || output.contains("error: could not compile") {
+        return Some("compilation".to_string());
+    }
+
+    if output.contains("test result: FAILED") || lower.contains("failures:") {
+        return Some("test".to_string());
+    }
+
+    let build_failure_patterns = [
+        "compilation error",
+        "build failed",
+        "cannot find",
+        "is not defined",
+        "unresolved import",
+        "undefined reference",
+        "cannot resolve",
+        "type mismatch",
+        "mismatched types",
+    ];
+    for pattern in &build_failure_patterns {
+        if lower.contains(pattern) {
+            return Some("build".to_string());
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use catcode_core::ChatResponse;
     use catcode_provider::mock::MockProvider;
     use catcode_tools::ToolRegistry;
 
@@ -1000,5 +1108,119 @@ mod tests {
 
         assert!(!result.models_used.is_empty());
         assert_eq!(result.models_used[0], "deepseek-chat");
+    }
+
+    #[test]
+    fn test_build_failure_detection_rust() {
+        let output = "error[E0308]: mismatched types\n   --> src/main.rs:25:8\n   |\n25 |     let x: i32 = \"hello\";\n   |         ^ expected `i32`, found `&str`";
+        assert_eq!(detect_build_failure(output), Some("compilation".to_string()));
+    }
+
+    #[test]
+    fn test_build_failure_detection_test() {
+        let output = "test result: FAILED. 5 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out";
+        assert_eq!(detect_build_failure(output), Some("test".to_string()));
+    }
+
+    #[test]
+    fn test_build_failure_detection_clean_output() {
+        let output = "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out";
+        assert!(detect_build_failure(output).is_none());
+    }
+
+    #[test]
+    fn test_build_failure_detection_clean_text() {
+        let output = "All systems go. Build completed successfully.";
+        assert!(detect_build_failure(output).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_streaming_accumulates_text() {
+        use catcode_core::types::ContentBlock;
+        let provider = Arc::new(MockProvider::new(vec![ChatResponse {
+            content: vec![
+                ContentBlock::Text { text: "Hello ".to_string() },
+                ContentBlock::Text { text: "World".to_string() },
+            ],
+            usage: TokenUsage { input_tokens: 10, output_tokens: 5, ..Default::default() },
+            stop_reason: StopReason::EndTurn,
+            model: "mock-model".to_string(),
+        }]));
+        let tools = Arc::new(ToolRegistry::with_builtins());
+        let middleware = Arc::new(MiddlewareChain::new());
+        let context = ContextStack::new("You are a helpful assistant.", "");
+        let budget = TokenBudget::new(500_000, 50_000, 0.80);
+
+        let mut agent = AgentLoop::new(provider, tools, middleware, context, budget, "deepseek-chat")
+            .with_self_heal(false)
+            .with_model_routing(false)
+            .with_subagent_dispatch(false)
+            .with_auto_plan(false);
+
+        let result = agent
+            .run("Hi", std::path::Path::new("/tmp"))
+            .await
+            .unwrap();
+
+        assert_eq!(result.response, "Hello World");
+        assert_eq!(result.turns_used, 1);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_with_tool_calls() {
+        use catcode_core::types::ContentBlock;
+        let provider = Arc::new(MockProvider::new(vec![
+            ChatResponse {
+                content: vec![
+                    ContentBlock::Text { text: "Let me read the file.".to_string() },
+                    ContentBlock::ToolCall {
+                        id: "call_1".to_string(),
+                        name: "glob".to_string(),
+                        args: serde_json::json!({"pattern": "*.rs"}),
+                    },
+                ],
+                usage: TokenUsage { input_tokens: 15, output_tokens: 8, ..Default::default() },
+                stop_reason: StopReason::ToolUse,
+                model: "mock-model".to_string(),
+            },
+            ChatResponse {
+                content: vec![
+                    ContentBlock::Text { text: "Here are the Rust files.".to_string() },
+                ],
+                usage: TokenUsage { input_tokens: 20, output_tokens: 5, ..Default::default() },
+                stop_reason: StopReason::EndTurn,
+                model: "mock-model".to_string(),
+            },
+        ]));
+        let tools = Arc::new(ToolRegistry::with_builtins());
+        let middleware = Arc::new(MiddlewareChain::new());
+        let context = ContextStack::new("You are a helpful assistant.", "");
+        let budget = TokenBudget::new(500_000, 50_000, 0.80);
+
+        let mut agent = AgentLoop::new(provider, tools, middleware, context, budget, "deepseek-chat")
+            .with_self_heal(false)
+            .with_model_routing(false)
+            .with_subagent_dispatch(false)
+            .with_auto_plan(false);
+
+        let result = agent
+            .run("Find Rust files", std::path::Path::new("/tmp"))
+            .await
+            .unwrap();
+
+        assert_eq!(result.turns_used, 2);
+        assert!(result.response.contains("Here are the Rust files"));
+    }
+
+    #[test]
+    fn test_build_failure_detection_compilation_error() {
+        let output = "error: could not compile `catcode-daemon` (bin \"catcode-daemon\" test)";
+        assert_eq!(detect_build_failure(output), Some("compilation".to_string()));
+    }
+
+    #[test]
+    fn test_build_failure_detection_build_failed() {
+        let output = "Build failed with 5 errors in 2.3s";
+        assert_eq!(detect_build_failure(output), Some("build".to_string()));
     }
 }

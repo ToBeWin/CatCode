@@ -28,6 +28,7 @@ chrono = { workspace = true }
 sqlx = { workspace = true }
 regex = { workspace = true }
 lru = { workspace = true }
+futures = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }

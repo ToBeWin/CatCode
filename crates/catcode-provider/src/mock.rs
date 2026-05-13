@@ -1,9 +1,11 @@
 use async_trait::async_trait;
 use catcode_core::error::ProviderError;
 use catcode_core::provider::{
-    ModelInfo, ModelTier, Provider, ProviderCapabilities, ProviderContext, TokenCounter,
+    ChatStream, ChatStreamChunk, ModelInfo, ModelTier, Provider, ProviderCapabilities,
+    ProviderContext, TokenCounter, ToolCallDelta,
 };
 use catcode_core::types::{ChatRequest, ChatResponse, Message, TokenUsage};
+use futures::stream;
 use std::sync::{Arc, Mutex};
 
 /// A mock provider for testing. Returns pre-configured responses in sequence,
@@ -106,6 +108,73 @@ impl Provider for MockProvider {
         let idx = *count % responses.len();
         *count += 1;
         Ok(responses[idx].clone())
+    }
+
+    async fn stream_chat(
+        &self,
+        _request: ChatRequest,
+        _ctx: &ProviderContext,
+    ) -> Result<ChatStream, ProviderError> {
+        let mut count = self.call_count.lock().unwrap();
+        let responses = self.responses.lock().unwrap();
+
+        if responses.is_empty() {
+            return Err(ProviderError::Unavailable(
+                "No mock responses configured".to_string(),
+            ));
+        }
+
+        let idx = *count % responses.len();
+        *count += 1;
+        let response = responses[idx].clone();
+
+        let mut chunks: Vec<Result<ChatStreamChunk, ProviderError>> = Vec::new();
+
+        for block in &response.content {
+            match block {
+                catcode_core::types::ContentBlock::Text { text } => {
+                    chunks.push(Ok(ChatStreamChunk {
+                        content: Some(text.clone()),
+                        thinking: None,
+                        tool_call_delta: None,
+                        usage: None,
+                        stop_reason: None,
+                    }));
+                }
+                catcode_core::types::ContentBlock::Thinking { text } => {
+                    chunks.push(Ok(ChatStreamChunk {
+                        content: None,
+                        thinking: Some(text.clone()),
+                        tool_call_delta: None,
+                        usage: None,
+                        stop_reason: None,
+                    }));
+                }
+                catcode_core::types::ContentBlock::ToolCall { id, name, args } => {
+                    chunks.push(Ok(ChatStreamChunk {
+                        content: None,
+                        thinking: None,
+                        tool_call_delta: Some(ToolCallDelta {
+                            id: Some(id.clone()),
+                            name: Some(name.clone()),
+                            args_delta: Some(serde_json::to_string(args).unwrap_or_default()),
+                        }),
+                        usage: None,
+                        stop_reason: None,
+                    }));
+                }
+            }
+        }
+
+        chunks.push(Ok(ChatStreamChunk {
+            content: None,
+            thinking: None,
+            tool_call_delta: None,
+            usage: Some(response.usage.clone()),
+            stop_reason: Some(response.stop_reason.clone()),
+        }));
+
+        Ok(Box::pin(stream::iter(chunks)))
     }
 
     async fn health_check(&self) -> Result<(), ProviderError> {
