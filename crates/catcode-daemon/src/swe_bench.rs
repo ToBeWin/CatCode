@@ -111,6 +111,7 @@ impl SweBenchResult {
 
 /// Test outcomes for a SWE-Bench instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct TestResults {
     pub fail_to_pass: Vec<String>,
     pub pass_to_pass: Vec<String>,
@@ -126,17 +127,6 @@ impl TestResults {
     }
 }
 
-impl Default for TestResults {
-    fn default() -> Self {
-        Self {
-            fail_to_pass: Vec::new(),
-            pass_to_pass: Vec::new(),
-            fail_to_fail: Vec::new(),
-            pass_to_fail: Vec::new(),
-            applied_patch: String::new(),
-        }
-    }
-}
 
 /// Aggregated SWE-Bench evaluation report.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -324,7 +314,7 @@ impl SweBenchHarness {
         let clone_ok = if repo_dir.join(".git").exists() {
             true
         } else {
-            self.git_clone(&instance, &repo_dir).await?
+            self.git_clone(instance, &repo_dir).await?
         };
 
         if !clone_ok {

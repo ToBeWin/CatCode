@@ -1,3 +1,25 @@
+//! # catcode-provider
+//!
+//! LLM provider implementations for the CatCode AI coding agent.
+//!
+//! Supports multiple providers through the [`catcode_core::Provider`] trait:
+//!
+//! | Provider | Module | Auth |
+//! |----------|--------|------|
+//! | Anthropic (Claude) | [`anthropic`] | API key |
+//! | DeepSeek | [`deepseek`] | API key |
+//! | OpenAI / Compatible | [`openai`] | API key |
+//! | OpenRouter | [`openrouter`] | API key |
+//! | Google (Gemini) | [`google`] | API key |
+//! | MiniMax | [`minimax`] | API key |
+//! | Zhipu GLM | [`glm`] | API key |
+//! | Alibaba Qwen | [`qwen`] | API key |
+//! | Volcengine | [`volcengine`] | API key |
+//! | Ollama (local) | [`ollama`] | None |
+//! | Mock (testing) | [`mock`] | None |
+//!
+//! The [`ProviderRegistry`] manages registration, discovery, and health checks.
+
 pub mod anthropic;
 pub mod deepseek;
 pub mod glm;

@@ -624,6 +624,39 @@ pub enum AgentLoopError {
     MaxTurnsExceeded(u64),
 }
 
+impl AgentLoopError {
+    /// Return a user-friendly error message suitable for displaying in the TUI.
+    pub fn user_friendly_message(&self) -> String {
+        match self {
+            AgentLoopError::ProviderError(msg) => {
+                format!(
+                    "Model API call failed: {}. Check your API key and network connection.",
+                    msg
+                )
+            }
+            AgentLoopError::BudgetExhausted => {
+                "Token budget exhausted. Use a cheaper model or increase budget in config."
+                    .to_string()
+            }
+            AgentLoopError::MaxTurnsExceeded(turns) => {
+                format!(
+                    "Max turns reached ({}). The task may be too complex — try breaking it into smaller steps.",
+                    turns
+                )
+            }
+        }
+    }
+
+    /// Return a short status label for the error.
+    pub fn status_label(&self) -> &str {
+        match self {
+            AgentLoopError::ProviderError(_) => "API error",
+            AgentLoopError::BudgetExhausted => "budget exhausted",
+            AgentLoopError::MaxTurnsExceeded(_) => "max turns",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

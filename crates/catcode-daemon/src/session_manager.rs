@@ -95,6 +95,12 @@ impl SessionManager {
         self.sessions.remove(id)
     }
 
+    /// Force add a session bypassing the max_concurrent check.
+    pub fn force_add(&mut self, session: Session) {
+        let id = session.id.clone();
+        self.sessions.insert(id, session);
+    }
+
     /// List summaries of all sessions.
     pub fn list(&self) -> Vec<SessionSummary> {
         self.sessions.values().map(SessionSummary::from).collect()

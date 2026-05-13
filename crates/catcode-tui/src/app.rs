@@ -17,6 +17,8 @@ pub enum AgentEvent {
     ToolCall { tool: String, args: String },
     /// Tool execution completed.
     ToolResult { tool: String, output: String },
+    /// Status updates during processing (e.g. "Calling DeepSeek...").
+    StatusUpdate(String),
     /// Agent finished processing.
     Completed,
     /// Agent encountered an error.
@@ -185,6 +187,10 @@ pub struct App {
     pub agent_event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
     /// Whether the agent is currently processing.
     pub agent_busy: bool,
+    /// Status message to show while busy (e.g. "Calling DeepSeek...")
+    pub busy_message: String,
+    /// Spinner animation frame counter (0..=3, cycles through |/-\)
+    pub spinner_frame: u8,
     /// Input history for up/down navigation.
     pub input_history: Vec<String>,
     /// Current position in input history (None = not navigating).
@@ -227,6 +233,8 @@ impl App {
             agent_event_rx: None,
             agent_event_tx: None,
             agent_busy: false,
+            busy_message: String::new(),
+            spinner_frame: 0,
             input_history: Vec::new(),
             history_index: None,
             history_saved_input: String::new(),
@@ -917,6 +925,8 @@ impl App {
 
             // Spawn a background task to simulate agent processing
             tokio::spawn(async move {
+                let _ = tx.send(AgentEvent::StatusUpdate("Analyzing request...".to_string()));
+
                 // Simulate thinking time with real-time updates
                 for chunk in [
                     "Let me analyze your request...\n",
@@ -928,6 +938,8 @@ impl App {
                     let _ = tx.send(AgentEvent::Thinking(chunk.to_string()));
                 }
 
+                let _ = tx.send(AgentEvent::StatusUpdate("Executing tool...".to_string()));
+
                 // Simulate tool call
                 let _ = tx.send(AgentEvent::ToolCall {
                     tool: "thinking".to_string(),
@@ -936,6 +948,8 @@ impl App {
 
                 tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
+                let _ = tx.send(AgentEvent::StatusUpdate("Generating response...".to_string()));
+
                 // Generate a response based on the input
                 let response = generate_response(&msg);
 
@@ -943,6 +957,13 @@ impl App {
                 let _ = tx.send(AgentEvent::AgentMessage(response));
                 let _ = tx.send(AgentEvent::Completed);
             });
+        }
+    }
+
+    /// Advance the spinner animation frame. Called on each Tick.
+    pub fn tick(&mut self) {
+        if self.agent_busy {
+            self.spinner_frame = (self.spinner_frame + 1) % 4;
         }
     }
 
@@ -991,13 +1012,21 @@ impl App {
                         format!("{} result: {}", tool, output),
                     );
                 }
+                AgentEvent::StatusUpdate(msg) => {
+                    self.busy_message = msg;
+                    self.status = format!("⟳ {}", self.busy_message);
+                }
                 AgentEvent::Completed => {
                     self.agent_busy = false;
+                    self.busy_message.clear();
+                    self.spinner_frame = 0;
                     self.set_cat_state(CatState::Idle);
                 }
                 AgentEvent::Error(err) => {
                     self.add_message(MessageRole::System, format!("Error: {}", err));
                     self.agent_busy = false;
+                    self.busy_message.clear();
+                    self.spinner_frame = 0;
                     self.set_cat_state(CatState::Error);
                 }
                 AgentEvent::TokenUpdate { input, output, cache } => {

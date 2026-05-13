@@ -430,20 +430,18 @@ mod tests {
         // Default policy has memory limit
         let mem_idx = args.iter().position(|a| a == "--memory");
         assert!(mem_idx.is_some());
-        if let Some(idx) = mem_idx {
-            if idx + 1 < args.len() {
+        if let Some(idx) = mem_idx
+            && idx + 1 < args.len() {
                 assert_eq!(args[idx + 1], "512m");
             }
-        }
 
         // Default policy has CPU limit
         let cpus_idx = args.iter().position(|a| a == "--cpus");
         assert!(cpus_idx.is_some());
-        if let Some(idx) = cpus_idx {
-            if idx + 1 < args.len() {
+        if let Some(idx) = cpus_idx
+            && idx + 1 < args.len() {
                 assert_eq!(args[idx + 1], "0.5");
             }
-        }
     }
 
     #[test]

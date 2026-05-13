@@ -434,14 +434,14 @@ mod tests {
 
     #[test]
     fn test_detect_language() {
-        assert_eq!(detect_language(&std::path::Path::new("foo.rs")), "rust");
-        assert_eq!(detect_language(&std::path::Path::new("foo.py")), "python");
-        assert_eq!(detect_language(&std::path::Path::new("foo.js")), "javascript");
-        assert_eq!(detect_language(&std::path::Path::new("foo.ts")), "typescript");
-        assert_eq!(detect_language(&std::path::Path::new("foo.go")), "go");
-        assert_eq!(detect_language(&std::path::Path::new("foo.java")), "java");
-        assert_eq!(detect_language(&std::path::Path::new("foo.rb")), "ruby");
-        assert_eq!(detect_language(&std::path::Path::new("foo.unknown")), "unknown");
+        assert_eq!(detect_language(std::path::Path::new("foo.rs")), "rust");
+        assert_eq!(detect_language(std::path::Path::new("foo.py")), "python");
+        assert_eq!(detect_language(std::path::Path::new("foo.js")), "javascript");
+        assert_eq!(detect_language(std::path::Path::new("foo.ts")), "typescript");
+        assert_eq!(detect_language(std::path::Path::new("foo.go")), "go");
+        assert_eq!(detect_language(std::path::Path::new("foo.java")), "java");
+        assert_eq!(detect_language(std::path::Path::new("foo.rb")), "ruby");
+        assert_eq!(detect_language(std::path::Path::new("foo.unknown")), "unknown");
     }
 
     #[test]

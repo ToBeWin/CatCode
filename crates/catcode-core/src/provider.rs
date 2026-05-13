@@ -103,8 +103,8 @@ pub trait Provider: Send + Sync {
 
     async fn stream_chat(
         &self,
-        request: ChatRequest,
-        ctx: &ProviderContext,
+        _request: ChatRequest,
+        _ctx: &ProviderContext,
     ) -> Result<ChatStream, ProviderError> {
         Err(ProviderError::RequestFailed(
             "Streaming not supported by this provider".to_string(),

@@ -69,7 +69,7 @@ impl Severity {
 
 impl PartialOrd for Severity {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.rank().cmp(&other.rank()))
+        Some(self.cmp(other))
     }
 }
 
@@ -225,11 +225,10 @@ impl SecurityScanner {
                     // Also scan deps by looking for package.json in same dir
                     if let Some(parent) = path.parent() {
                         let pj = parent.join("package.json");
-                        if pj.exists() {
-                            if let Ok(c) = fs::read_to_string(&pj) {
+                        if pj.exists()
+                            && let Ok(c) = fs::read_to_string(&pj) {
                                 findings.extend(scan_package_json(&c, &pj));
                             }
-                        }
                     }
                     // Remove the info finding if we added actual vuln findings from package.json
                     if findings.len() > findings_len + 1 {
@@ -299,16 +298,14 @@ fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
             if !SKIP_DIRS.contains(&name.as_ref()) && !name.starts_with('.') {
                 collect_files_recursive(&path, files);
             }
-        } else if path.is_file() {
-            if let Ok(meta) = path.metadata() {
-                if meta.len() > 0 && meta.len() < 5 * 1024 * 1024 {
+        } else if path.is_file()
+            && let Ok(meta) = path.metadata()
+                && meta.len() > 0 && meta.len() < 5 * 1024 * 1024 {
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
                     if !name.starts_with('.') {
                         files.push(path);
                     }
                 }
-            }
-        }
     }
 }
 
@@ -337,11 +334,10 @@ fn find_dependency_files(dir: &Path) -> Vec<(PathBuf, String)> {
             }
         } else if let Some(fname) = path.file_name() {
             let fname = fname.to_string_lossy();
-            if targets.contains(&fname.as_ref()) {
-                if let Ok(content) = fs::read_to_string(&path) {
+            if targets.contains(&fname.as_ref())
+                && let Ok(content) = fs::read_to_string(&path) {
                     results.push((path, content));
                 }
-            }
         }
     }
 
@@ -621,15 +617,14 @@ fn detect_code_injection(content: &str, path: &Path) -> Vec<SecurityFinding> {
         }
 
         // execSync in Node.js
-        if ext == "js" || ext == "ts" || ext == "jsx" || ext == "tsx" {
-            if trimmed.contains("execSync(") || trimmed.contains("exec(") && !trimmed.contains("eval(") {
+        if (ext == "js" || ext == "ts" || ext == "jsx" || ext == "tsx")
+            && (trimmed.contains("execSync(") || trimmed.contains("exec(") && !trimmed.contains("eval(")) {
                 // Already handled by exec() above, but Node-specific note
             }
-        }
 
         // unsafe blocks in Rust
-        if ext == "rs" && trimmed.contains("unsafe") && !trimmed.trim_start().starts_with("//") {
-            if trimmed.contains("unsafe {") || trimmed == "unsafe" || trimmed.starts_with("unsafe ") {
+        if ext == "rs" && trimmed.contains("unsafe") && !trimmed.trim_start().starts_with("//")
+            && (trimmed.contains("unsafe {") || trimmed == "unsafe" || trimmed.starts_with("unsafe ")) {
                 findings.push(make_finding(
                     Severity::Medium,
                     FindingCategory::BestPractice,
@@ -642,7 +637,6 @@ fn detect_code_injection(content: &str, path: &Path) -> Vec<SecurityFinding> {
                     None,
                 ));
             }
-        }
 
         // dangerouslySetInnerHTML (React)
         if trimmed.contains("dangerouslySetInnerHTML") {
@@ -676,8 +670,8 @@ fn detect_code_injection(content: &str, path: &Path) -> Vec<SecurityFinding> {
 
         // Raw SQL string building (contains SQL keywords with concatenation or interpolation)
         let sql_keywords = ["SELECT ", "INSERT ", "UPDATE ", "DELETE ", "DROP ", "CREATE "];
-        if sql_keywords.iter().any(|kw| trimmed.contains(kw)) {
-            if trimmed.contains('+') || trimmed.contains('$') || trimmed.contains("format(") || trimmed.contains(".format(") {
+        if sql_keywords.iter().any(|kw| trimmed.contains(kw))
+            && (trimmed.contains('+') || trimmed.contains('$') || trimmed.contains("format(") || trimmed.contains(".format(")) {
                 findings.push(make_finding(
                     Severity::High,
                     FindingCategory::CodeInjection,
@@ -690,7 +684,6 @@ fn detect_code_injection(content: &str, path: &Path) -> Vec<SecurityFinding> {
                     None,
                 ));
             }
-        }
     }
 
     findings
@@ -720,8 +713,8 @@ fn detect_config_issues(dir: &Path) -> Vec<SecurityFinding> {
         let path_str = path.to_string_lossy();
 
         // .env files checked on reveal
-        if fname == ".env" && !fname.ends_with(".example") && !fname.ends_with(".template") {
-            if let Ok(content) = fs::read_to_string(&path) {
+        if fname == ".env" && !fname.ends_with(".example") && !fname.ends_with(".template")
+            && let Ok(content) = fs::read_to_string(&path) {
                 let has_real_values = content.lines().any(|l| {
                     l.contains('=') && !l.trim().starts_with('#')
                         && !l.contains("your-") && !l.contains("changeme") && !l.contains("example")
@@ -752,7 +745,6 @@ fn detect_config_issues(dir: &Path) -> Vec<SecurityFinding> {
                     ));
                 }
             }
-        }
     }
 
     // Check for CORS: * configuration in JSON/YAML config files
@@ -904,7 +896,7 @@ fn version_matches(version: &str, constraint: &str) -> bool {
         if let Some(major) = range.split('.').next() {
             let next_major = major.parse::<u32>().unwrap_or(0) + 1;
             let max_ver = format!("{}.0.0", next_major);
-            return version >= range && &version[..] < &max_ver[..];
+            return version >= range && version < &max_ver[..];
         }
     }
     version.starts_with(constraint)
@@ -1033,8 +1025,8 @@ fn check_known_vulns(package: &str, version: &str, _ecosystem: &str) -> Vec<Secu
     let pkg_lower = package.to_lowercase();
 
     for cve in KNOWN_CVES {
-        if cve.ecosystem == _ecosystem && pkg_lower == cve.package {
-            if (cve.version_constraint)(version) {
+        if cve.ecosystem == _ecosystem && pkg_lower == cve.package
+            && (cve.version_constraint)(version) {
                 findings.push(make_finding(
                     cve.severity,
                     FindingCategory::DependencyVuln,
@@ -1047,7 +1039,6 @@ fn check_known_vulns(package: &str, version: &str, _ecosystem: &str) -> Vec<Secu
                     Some(cve.cve_id.to_string()),
                 ));
             }
-        }
     }
 
     findings
@@ -1119,7 +1110,7 @@ fn scan_package_json(content: &str, path: &Path) -> Vec<SecurityFinding> {
             for (name, version_val) in deps {
                 let version = version_val.as_str().unwrap_or("unknown");
                 // Strip semver range prefixes like ^ ~ >= <=
-                let clean_version = version.trim_start_matches(|c: char| matches!(c, '^' | '~' | '>' | '<' | '='));
+                let clean_version = version.trim_start_matches(['^', '~', '>', '<', '=']);
                 findings.extend(check_known_vulns(name, clean_version, "npm"));
             }
         }
@@ -1188,7 +1179,7 @@ fn scan_pipfile(content: &str, path: &Path) -> Vec<SecurityFinding> {
                     }
                     _ => continue,
                 };
-                let clean_version = version.trim_start_matches(|c: char| matches!(c, '^' | '~' | '>' | '<' | '='));
+                let clean_version = version.trim_start_matches(['^', '~', '>', '<', '=']);
                 findings.extend(check_known_vulns(name, clean_version, "pip"));
             }
         }
@@ -1213,6 +1204,7 @@ fn scan_pipfile(content: &str, path: &Path) -> Vec<SecurityFinding> {
 
 // ===== Helpers =====
 
+#[allow(clippy::too_many_arguments)]
 fn make_finding(
     severity: Severity,
     category: FindingCategory,
@@ -1281,13 +1273,11 @@ mod tests {
 
     #[test]
     fn test_severity_sorting() {
-        let mut severities = vec![
-            Severity::Low,
+        let mut severities = [Severity::Low,
             Severity::Critical,
             Severity::Info,
             Severity::High,
-            Severity::Medium,
-        ];
+            Severity::Medium];
         severities.sort();
         assert_eq!(severities[0], Severity::Info);
         assert_eq!(severities[1], Severity::Low);
@@ -1741,7 +1731,7 @@ pytest = "*"
         // File with secret
         fs::write(
             tmp.path().join("config.rs"),
-            &format!("let stripe_key = \"sk_{}DATAabcdefghijklmnopqrstuvwxyz\";\n", "live_T"),
+            format!("let stripe_key = \"sk_{}DATAabcdefghijklmnopqrstuvwxyz\";\n", "live_T"),
         )
         .unwrap();
 
@@ -1912,7 +1902,7 @@ source = "registry+"
         // Verify all patterns compile
         for pattern in SECRET_PATTERNS {
             let re = (pattern.pattern)();
-            assert!(re.as_str().len() > 0);
+            assert!(!re.as_str().is_empty());
         }
     }
 }

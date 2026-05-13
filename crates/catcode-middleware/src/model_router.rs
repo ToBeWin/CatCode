@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn test_estimate_complexity_moderate() {
         let score = estimate_complexity("Add a new endpoint to the API");
-        assert!(score >= 0.3 && score <= 0.6);
+        assert!((0.3..=0.6).contains(&score));
     }
 
     #[test]

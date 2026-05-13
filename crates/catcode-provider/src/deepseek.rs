@@ -539,11 +539,9 @@ impl DeepSeekProvider {
                             }
                             if let Ok(sse_chunk) =
                                 serde_json::from_slice::<StreamChunk>(data)
-                            {
-                                if let Some(chat_chunk) = convert_stream_chunk(sse_chunk) {
+                                && let Some(chat_chunk) = convert_stream_chunk(sse_chunk) {
                                     let _ = tx.unbounded_send(Ok(chat_chunk));
                                 }
-                            }
                         }
                         buffer.clear();
                     } else if byte != b'\r' {

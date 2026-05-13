@@ -607,15 +607,13 @@ Focus on:
                 let mut brace_count = 0usize;
                 let mut fn_end = fn_start;
                 let mut started = false;
-                for j in fn_start..lines.len() {
-                    for c in lines[j].chars() {
+                for (j, line) in lines.iter().enumerate().skip(fn_start) {
+                    for c in line.chars() {
                         if c == '{' {
                             brace_count += 1;
                             started = true;
                         } else if c == '}' {
-                            if brace_count > 0 {
-                                brace_count -= 1;
-                            }
+                            brace_count = brace_count.saturating_sub(1);
                         }
                     }
                     if started && brace_count == 0 {
@@ -739,7 +737,7 @@ Focus on:
                     let content = if line.is_empty() {
                         String::new()
                     } else {
-                        line[1..].to_string()
+                        line.strip_prefix(' ').unwrap_or(line).to_string()
                     };
                     old_lines.push(content.clone());
                     new_lines.push(content);

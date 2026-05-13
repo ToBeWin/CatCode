@@ -472,14 +472,28 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
         InputMode::Command => " Enter:exec | Esc:cancel | Tab:autocomplete".to_string(),
     };
 
-    let status_text = if app.status.is_empty() {
+    // Show spinner when agent is busy
+    let status_text = if app.agent_busy {
+        let spinner_chars = ['|', '/', '-', '\\'];
+        let spinner = spinner_chars[app.spinner_frame as usize % 4];
+        if app.busy_message.is_empty() {
+            format!(" {} {} │ {}", spinner, "Processing...", help)
+        } else {
+            format!(" {} {} │ {}", spinner, app.busy_message, help)
+        }
+    } else if app.status.is_empty() {
         help
     } else {
         format!("{} │ {}", app.status, help)
     };
 
-    let paragraph =
-        Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray).bg(Color::Black));
+    let spinner_style = if app.agent_busy {
+        Style::default().fg(Color::Cyan).bg(Color::Black)
+    } else {
+        Style::default().fg(Color::DarkGray).bg(Color::Black)
+    };
+
+    let paragraph = Paragraph::new(status_text).style(spinner_style);
 
     f.render_widget(paragraph, area);
 }
@@ -539,8 +553,8 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::const_is_empty)]
     fn test_command_suggestions_filtering() {
-        // Verify the command list is non-empty
         assert!(!COMMANDS.is_empty());
         assert!(COMMANDS.iter().any(|(cmd, _)| cmd.starts_with("new")));
         assert!(COMMANDS.iter().any(|(cmd, _)| cmd.starts_with("quit")));

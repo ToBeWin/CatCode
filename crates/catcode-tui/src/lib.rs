@@ -38,12 +38,92 @@ pub async fn run(project_dir: PathBuf) -> anyhow::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Create app
-    let mut app = App::new(project_dir);
+    let mut app = App::new(project_dir.clone());
     let mut event_handler = event::EventHandler::new(Duration::from_millis(250));
 
-    // Create a default session
-    app.create_session("main");
-    app.add_message(app::MessageRole::System, "Welcome to CatCode! Type a message or use /help for commands.");
+    // Try to restore sessions from database
+    let db_path = project_dir.join(".catcode").join("catcode.db");
+    let restored_count = {
+        let mut count = 0u64;
+        if let Ok(db) = catcode_daemon::Database::new(
+            &db_path.to_string_lossy(),
+        )
+        .await
+            && let Ok(sessions) = db.list_sessions().await
+        {
+            for row in &sessions {
+                let state = row.parse_state();
+                let is_terminal = matches!(
+                    state,
+                    catcode_daemon::SessionState::Completed
+                        | catcode_daemon::SessionState::Failed(_)
+                );
+                if !is_terminal {
+                    let session = catcode_daemon::Session::new(
+                        &row.name,
+                        std::path::PathBuf::from(&row.project_dir),
+                        &row.model_id,
+                        &row.provider_id,
+                    );
+                    let id = session.id.clone();
+                    app.sessions.force_remove(&id);
+                    app.sessions.force_add(session);
+                    if let Some(s) = app.sessions.get_mut(&id) {
+                        s.set_state(state);
+                        s.turn_count = row.turn_count as u64;
+                    }
+                    count += 1;
+                }
+            }
+        }
+        count
+    };
+
+    // Check if config exists for welcome message
+    let config_exists = project_dir.join(".catcode").join("config.toml").exists()
+        || std::path::PathBuf::from("./catcode.toml").exists()
+        || dirs::config_dir()
+            .map(|p| p.join("catcode").join("config.toml").exists())
+            .unwrap_or(false);
+
+    // Create a default session if none restored
+    if app.sessions.total_count() == 0 {
+        app.create_session("main");
+    }
+
+    // Show appropriate welcome message
+    let welcome = if config_exists {
+        if restored_count > 0 {
+            format!(
+                "Welcome back! Restored {} session{} from last session. Type a message or use /help for commands.",
+                restored_count,
+                if restored_count == 1 { "" } else { "s" },
+            )
+        } else {
+            "Welcome to CatCode! Type a message or use /help for commands.".to_string()
+        }
+    } else {
+        if restored_count > 0 {
+            app.add_message(
+                app::MessageRole::System,
+                format!("Restored {} session{} from last session.", restored_count, if restored_count == 1 { "" } else { "s" }),
+            );
+        }
+        let welcome_box = "\
+╔══════════════════════════════════════════╗
+║         Welcome to CatCode!             ║
+║                                          ║
+║  Quick start:                            ║
+║   1. /set-provider <name>  — set provider║
+║   2. /model <name>        — choose model ║
+║   3. Type your message and press Enter   ║
+║                                          ║
+║  Commands: /help  to see all commands    ║
+║  First time?  Run: catcode init          ║
+╚══════════════════════════════════════════╝";
+        welcome_box.to_string()
+    };
+    app.add_message(app::MessageRole::System, &welcome);
 
     // Main event loop
     let result = run_event_loop(&mut terminal, &mut app, &mut event_handler).await;
@@ -81,7 +161,7 @@ async fn run_event_loop(
                 // Terminal was resized — ratatui handles this automatically
             }
             event::AppEvent::Tick => {
-                // Periodic tick — could be used for animations or polling
+                app.tick();
             }
         }
 

@@ -407,7 +407,7 @@ impl Provider for GLMProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use catcode_core::types::{ContentBlock, StopReason};
+    use catcode_core::types::StopReason;
 
     #[test]
     fn test_serialize_request_basic() {

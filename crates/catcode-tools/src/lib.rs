@@ -1,7 +1,17 @@
-//! catcode-tools: Built-in tools for the CatCode AI agent.
+//! # catcode-tools
 //!
-//! Each tool implements the `catcode_core::Tool` trait. The `ToolRegistry`
+//! Built-in tools for the CatCode AI coding agent.
+//!
+//! Each tool implements the [`catcode_core::Tool`] trait. The [`ToolRegistry`]
 //! manages tool discovery, dispatch, and LLM schema generation.
+//!
+//! ## Available tools
+//!
+//! - **File ops**: [`ReadFileTool`], [`WriteFileTool`], [`PatchFileTool`], [`DeleteFileTool`], [`ListDirTool`]
+//! - **Search**: [`GlobTool`], [`SearchFilesTool`], [`WebFetchTool`]
+//! - **Code analysis**: [`CodeAnalysisTool`]
+//! - **Git**: [`GitCommitTool`], [`GitDiffTool`], [`GitStatusTool`]
+//! - **Shell**: [`BashTool`]
 
 pub mod bash;
 pub mod code_analysis;
