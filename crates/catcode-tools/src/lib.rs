@@ -13,18 +13,31 @@
 //! - **Git**: [`GitCommitTool`], [`GitDiffTool`], [`GitStatusTool`]
 //! - **Shell**: [`BashTool`]
 
+/// The `bash` module.
 pub mod bash;
+/// The `code_analysis` module.
 pub mod code_analysis;
+/// The `delete_file` module.
 pub mod delete_file;
+/// The `git_commit` module.
 pub mod git_commit;
+/// The `git_diff` module.
 pub mod git_diff;
+/// The `git_status` module.
 pub mod git_status;
+/// The `glob` module.
 pub mod glob;
+/// The `list_dir` module.
 pub mod list_dir;
+/// The `patch_file` module.
 pub mod patch_file;
+/// The `read_file` module.
 pub mod read_file;
+/// The `search` module.
 pub mod search;
+/// The `web_fetch` module.
 pub mod web_fetch;
+/// The `write_file` module.
 pub mod write_file;
 
 mod registry;

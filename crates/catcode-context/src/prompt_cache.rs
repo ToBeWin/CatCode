@@ -134,8 +134,10 @@ impl PromptCacheOptimizer {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheRegionType {
     /// System prompt — most stable, highest cache confidence.
+/// [`SystemPrompt`].
     SystemPrompt,
     /// Early conversation messages — moderately stable.
+/// [`EarlyMessages`].
     EarlyMessages { start_index: usize, end_index: usize },
 }
 
@@ -215,11 +217,13 @@ impl CacheStats {
         self.cost_saved_usd += (tokens_saved as f64 / 1_000_000.0) * cost_per_mtok;
     }
 
+/// Record miss.
     pub fn record_miss(&mut self) {
         self.total_requests += 1;
         self.cache_misses += 1;
     }
 
+/// Hit rate.
     pub fn hit_rate(&self) -> f64 {
         if self.total_requests == 0 {
             0.0

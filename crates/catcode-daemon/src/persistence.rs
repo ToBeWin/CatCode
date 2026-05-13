@@ -322,6 +322,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_session ON audit_log(session_id);
 // === Row types ===
 
 #[derive(Debug, Clone, sqlx::FromRow)]
+/// A session row from the database.
 pub struct SessionRow {
     pub id: String,
     pub name: String,
@@ -335,6 +336,7 @@ pub struct SessionRow {
 }
 
 impl SessionRow {
+/// Parse the stored state string into a `SessionState`.
     pub fn parse_state(&self) -> SessionState {
         match self.state.as_str() {
             "running" => SessionState::Running,
@@ -349,6 +351,7 @@ impl SessionRow {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
+/// A message row from the database.
 pub struct MessageRow {
     pub id: i64,
     pub session_id: String,
@@ -359,6 +362,7 @@ pub struct MessageRow {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
+/// Aggregated token usage row from the database.
 pub struct UsageRow {
     pub input_tokens: i64,
     pub output_tokens: i64,
@@ -367,6 +371,7 @@ pub struct UsageRow {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
+/// An audit log entry from the database.
 pub struct AuditRow {
     pub id: i64,
     pub session_id: String,

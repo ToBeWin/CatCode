@@ -5,10 +5,13 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InstructionStyle {
     /// Strong models: concise, minimal instructions.
+/// [`Concise`].
     Concise,
     /// Weaker models: detailed, step-by-step instructions.
+/// [`Explicit`].
     Explicit,
     /// Reasoning models: encourage chain-of-thought.
+/// [`ChainOfThought`].
     ChainOfThought,
 }
 
@@ -16,10 +19,13 @@ pub enum InstructionStyle {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolCallFormat {
     /// OpenAI-compatible function calling.
+/// [`OpenAI`].
     OpenAI,
     /// Anthropic-style tool use.
+/// [`Anthropic`].
     Anthropic,
     /// XML-based tool calls (for models that prefer XML).
+/// [`Xml`].
     Xml,
 }
 

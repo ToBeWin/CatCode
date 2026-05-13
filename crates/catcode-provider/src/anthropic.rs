@@ -254,6 +254,7 @@ pub struct AnthropicProvider {
 }
 
 impl AnthropicProvider {
+/// Create a new Anthropic provider.
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,

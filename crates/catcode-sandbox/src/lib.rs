@@ -14,10 +14,15 @@
 //! - 🟡 Sensitive: executed directly, logged in audit
 //! - 🔴 Dangerous: sandbox execution + optional human approval
 
+/// The `backend` module.
 pub mod backend;
+/// The `classifier` module.
 pub mod classifier;
+/// The `gate` module.
 pub mod gate;
+/// The `policy` module.
 pub mod policy;
+/// The `selector` module.
 pub mod selector;
 
 pub use backend::{NativeSandbox, SandboxBackend, SandboxCommand, SandboxError, SandboxOutput};
@@ -36,6 +41,7 @@ pub struct SandboxExecutor {
 }
 
 impl SandboxExecutor {
+/// Create a new sandbox executor with the given policy and gate.
     pub fn new(policy: SandboxPolicy, gate: ApprovalGate) -> Self {
         Self {
             selector: SandboxSelector::new(),

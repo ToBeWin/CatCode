@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 // === AppConfig ===
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// [`AppConfig`]
 pub struct AppConfig {
     pub daemon: DaemonConfig,
     pub defaults: DefaultsConfig,
@@ -15,6 +16,7 @@ pub struct AppConfig {
 // === DaemonConfig ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`DaemonConfig`]
 pub struct DaemonConfig {
     pub host: String,
     pub port: u16,
@@ -38,6 +40,7 @@ impl Default for DaemonConfig {
 // === DefaultsConfig ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`DefaultsConfig`]
 pub struct DefaultsConfig {
     pub provider: String,
     pub model: String,
@@ -57,6 +60,7 @@ impl Default for DefaultsConfig {
 // === BudgetConfig ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`BudgetConfig`]
 pub struct BudgetConfig {
     pub session_limit_tokens: u64,
     pub per_request_limit_tokens: u64,
@@ -78,6 +82,7 @@ impl Default for BudgetConfig {
 // === ContextConfig ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`ContextConfig`]
 pub struct ContextConfig {
     pub compression_enabled: bool,
     pub compression_threshold_ratio: f32,
@@ -103,6 +108,7 @@ impl Default for ContextConfig {
 // === MiddlewareConfig ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`MiddlewareConfig`]
 pub struct MiddlewareConfig {
     pub enabled: Vec<String>,
     pub loop_detection: LoopDetectionConfig,
@@ -130,6 +136,7 @@ impl Default for MiddlewareConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`LoopDetectionConfig`]
 pub struct LoopDetectionConfig {
     pub warn_threshold: u32,
     pub hard_limit: u32,
@@ -147,6 +154,7 @@ impl Default for LoopDetectionConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`RetryConfig`]
 pub struct RetryConfig {
     pub max_attempts: u32,
     pub base_delay_ms: u64,
@@ -164,6 +172,7 @@ impl Default for RetryConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`TimeoutConfig`]
 pub struct TimeoutConfig {
     pub request_timeout_secs: u64,
 }
@@ -177,6 +186,7 @@ impl Default for TimeoutConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`MemoryMiddlewareConfig`]
 pub struct MemoryMiddlewareConfig {
     pub debounce_seconds: u64,
     pub max_facts: usize,
@@ -198,6 +208,7 @@ impl Default for MemoryMiddlewareConfig {
 // === ProviderConfig ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`ProviderConfig`]
 pub struct ProviderConfig {
     pub api_key: Option<String>,
     pub base_url: Option<String>,
@@ -232,5 +243,132 @@ mod tests {
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 7070);
         assert!(config.auto_start);
+    }
+
+    #[test]
+    fn test_budget_config_defaults() {
+        let config = BudgetConfig::default();
+        assert_eq!(config.session_limit_tokens, 500_000);
+        assert_eq!(config.per_request_limit_tokens, 50_000);
+        assert!((config.warning_threshold - 0.80).abs() < f32::EPSILON);
+        assert_eq!(config.on_limit_reached, "pause");
+    }
+
+    #[test]
+    fn test_context_config_defaults() {
+        let config = ContextConfig::default();
+        assert!(config.compression_enabled);
+        assert!((config.compression_threshold_ratio - 0.75).abs() < f32::EPSILON);
+        assert!(config.dedup_tool_outputs);
+        assert!(config.roll_history_enabled);
+        assert!(config.filter_relevance_enabled);
+        assert_eq!(config.max_file_content_tokens, 8000);
+    }
+
+    #[test]
+    fn test_loop_detection_config_defaults() {
+        let config = LoopDetectionConfig::default();
+        assert_eq!(config.warn_threshold, 3);
+        assert_eq!(config.hard_limit, 5);
+        assert_eq!(config.window_size, 20);
+    }
+
+    #[test]
+    fn test_retry_config_defaults() {
+        let config = RetryConfig::default();
+        assert_eq!(config.max_attempts, 3);
+        assert_eq!(config.base_delay_ms, 1000);
+        assert_eq!(config.max_delay_ms, 30000);
+    }
+
+    #[test]
+    fn test_timeout_config_defaults() {
+        let config = TimeoutConfig::default();
+        assert_eq!(config.request_timeout_secs, 120);
+    }
+
+    #[test]
+    fn test_memory_middleware_config_defaults() {
+        let config = MemoryMiddlewareConfig::default();
+        assert_eq!(config.debounce_seconds, 30);
+        assert_eq!(config.max_facts, 100);
+        assert!((config.fact_confidence_threshold - 0.7).abs() < f32::EPSILON);
+        assert_eq!(config.max_injection_tokens, 2000);
+    }
+
+    #[test]
+    fn test_defaults_config_all_fields() {
+        let config = DefaultsConfig::default();
+        assert_eq!(config.provider, "deepseek");
+        assert_eq!(config.model, "deepseek-chat");
+        assert!(config.sandbox);
+    }
+
+    #[test]
+    fn test_provider_config_all_fields() {
+        let config = ProviderConfig {
+            api_key: Some("sk-test".to_string()),
+            base_url: Some("https://api.test.com".to_string()),
+            models: Some(vec!["model-a".to_string(), "model-b".to_string()]),
+        };
+        assert_eq!(config.api_key.as_deref(), Some("sk-test"));
+        assert_eq!(config.base_url.as_deref(), Some("https://api.test.com"));
+        assert_eq!(config.models.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_provider_config_none_fields() {
+        let config = ProviderConfig {
+            api_key: None,
+            base_url: None,
+            models: None,
+        };
+        assert!(config.api_key.is_none());
+        assert!(config.base_url.is_none());
+        assert!(config.models.is_none());
+    }
+
+    #[test]
+    fn test_middleware_config_enabled_list() {
+        let config = MiddlewareConfig::default();
+        assert!(config.enabled.contains(&"loop_detection".to_string()));
+        assert!(config.enabled.contains(&"retry".to_string()));
+        assert!(config.enabled.contains(&"timeout".to_string()));
+        assert_eq!(config.enabled.len(), 5);
+    }
+
+    #[test]
+    fn test_app_config_serialization_roundtrip() {
+        let config = AppConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.defaults.provider, "deepseek");
+        assert_eq!(deserialized.daemon.port, 7070);
+        assert_eq!(deserialized.budget.session_limit_tokens, 500_000);
+        assert!(deserialized.context.compression_enabled);
+    }
+
+    #[test]
+    fn test_daemon_config_serialization_roundtrip() {
+        let config = DaemonConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: DaemonConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.host, "127.0.0.1");
+        assert_eq!(deserialized.port, 7070);
+        assert_eq!(deserialized.max_concurrent_sessions, 5);
+        assert_eq!(deserialized.checkpoint_interval_turns, 10);
+    }
+
+    #[test]
+    fn test_budget_config_custom_values() {
+        let config = BudgetConfig {
+            session_limit_tokens: 1_000_000,
+            per_request_limit_tokens: 100_000,
+            warning_threshold: 0.9,
+            on_limit_reached: "stop".to_string(),
+        };
+        assert_eq!(config.session_limit_tokens, 1_000_000);
+        assert_eq!(config.per_request_limit_tokens, 100_000);
+        assert_eq!(config.on_limit_reached, "stop");
     }
 }

@@ -10,16 +10,27 @@
 //! - [`TimeoutMiddleware`] - enforces timeouts on tool execution
 //! - [`TokenUsageMiddleware`] - tracks token usage from model responses
 
+/// The `chain` module.
 pub mod chain;
+/// The `circuit_breaker` module.
 pub mod circuit_breaker;
+/// The `error_handling` module.
 pub mod error_handling;
+/// The `loop_detection` module.
 pub mod loop_detection;
+/// The `model_profile` module.
 pub mod model_profile;
+/// The `model_router` module.
 pub mod model_router;
+/// The `output_validator` module.
 pub mod output_validator;
+/// The `retry` module.
 pub mod retry;
+/// The `sandbox` module.
 pub mod sandbox;
+/// The `timeout` module.
 pub mod timeout;
+/// The `token_usage` module.
 pub mod token_usage;
 
 // Re-export all public types for convenience

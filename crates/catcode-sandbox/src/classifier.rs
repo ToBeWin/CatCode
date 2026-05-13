@@ -4,6 +4,7 @@ use catcode_core::OperationLevel;
 ///
 /// This extends the basic OperationLevel from catcode-core with
 /// argument-aware classification logic.
+/// Classifies tool operations by risk level (Safe, Sensitive, Dangerous).
 pub struct OperationClassifier;
 
 impl OperationClassifier {

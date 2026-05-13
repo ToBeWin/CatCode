@@ -18,6 +18,7 @@ pub struct Skill {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Metadata for a skill definition.
 pub struct SkillMetadata {
     pub name: String,
     pub version: String,
@@ -25,6 +26,7 @@ pub struct SkillMetadata {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Rules that govern when a skill is active.
 pub struct SkillRules {
     /// Tools that should always be run after changes (e.g., ["cargo check"])
     #[serde(default)]
@@ -38,6 +40,7 @@ pub struct SkillRules {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Prompt templates provided by a skill.
 pub struct SkillPrompts {
     /// Additional system prompt suffix for this skill
     #[serde(default)]
@@ -45,6 +48,7 @@ pub struct SkillPrompts {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Context engineering configuration for a skill.
 pub struct SkillContext {
     /// Files that should always be included in context
     #[serde(default)]
@@ -55,6 +59,7 @@ pub struct SkillContext {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Event hooks provided by a skill.
 pub struct SkillHooks {
     /// Commands to run before commit
     #[serde(default)]
@@ -68,21 +73,25 @@ pub struct SkillHooks {
 #[derive(Debug, thiserror::Error)]
 pub enum SkillError {
     #[error("IO error reading skill {path}: {source}")]
+/// [`IoError`].
     IoError {
         path: PathBuf,
         source: std::io::Error,
     },
 
     #[error("TOML parse error in {path}: {source}")]
+/// [`ParseError`].
     ParseError {
         path: PathBuf,
         source: toml::de::Error,
     },
 
     #[error("Invalid skill '{name}': {reason}")]
+/// [`Invalid`].
     Invalid { name: String, reason: String },
 
     #[error("Skill not found: {0}")]
+/// [`NotFound`].
     NotFound(String),
 }
 
@@ -153,6 +162,7 @@ pub struct SkillRegistry {
 }
 
 impl SkillRegistry {
+/// Create an empty skill registry.
     pub fn new() -> Self {
         Self {
             skills: HashMap::new(),

@@ -6,12 +6,16 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompactTier {
     /// Level 1: Replace old tool outputs with summaries in-place (no API)
+/// [`Micro`].
     Micro,
     /// Level 2: Remove stale/irrelevant messages (no API)
+/// [`Snip`].
     Snip,
     /// Level 3: Merge consecutive read results (no API)
+/// [`Collapse`].
     Collapse,
     /// Level 4: LLM-based full conversation summary (1 API call)
+/// [`Full`].
     Full,
 }
 
@@ -51,19 +55,13 @@ impl Default for CompactConfig {
 /// | 3     | Collapse     | Merge consecutive reads into combined descriptions     | No        |
 /// | 4     | FullCompact  | LLM summarizes conversation history                    | Yes (1)   |
 #[derive(Debug, Clone)]
+#[derive(Default)]
+/// [`TieredCompactor`]
 pub struct TieredCompactor {
     pub base: ContextCompressor,
     pub config: CompactConfig,
 }
 
-impl Default for TieredCompactor {
-    fn default() -> Self {
-        Self {
-            base: ContextCompressor::default(),
-            config: CompactConfig::default(),
-        }
-    }
-}
 
 impl TieredCompactor {
     /// Create a tiered compactor with default settings.

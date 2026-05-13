@@ -265,6 +265,7 @@ pub struct OpenAIProvider {
 }
 
 impl OpenAIProvider {
+/// Create a new OpenAI-compatible provider.
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,

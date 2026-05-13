@@ -9,10 +9,13 @@ pub struct AuthConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Authentication mode for the API server.
 pub enum AuthMode {
     /// Only listen on 127.0.0.1, no auth required.
+/// [`LocalOnly`].
     LocalOnly,
     /// Bearer token authentication.
+/// [`Token`].
     Token,
 }
 
@@ -113,5 +116,80 @@ mod tests {
             validate_auth(&config, &parts),
             Err(StatusCode::UNAUTHORIZED)
         );
+    }
+
+    #[test]
+    fn test_auth_config_default() {
+        let config = AuthConfig::default();
+        assert_eq!(config.mode, AuthMode::LocalOnly);
+        assert!(config.token.is_none());
+    }
+
+    #[test]
+    fn test_token_empty_token_returns_500() {
+        let config = AuthConfig {
+            mode: AuthMode::Token,
+            token: Some(String::new()),
+        };
+        let parts = empty_parts();
+        assert_eq!(
+            validate_auth(&config, &parts),
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        );
+    }
+
+    #[test]
+    fn test_token_whitespace_token_matches() {
+        let config = AuthConfig {
+            mode: AuthMode::Token,
+            token: Some("   ".to_string()),
+        };
+        let mut parts = empty_parts();
+        parts.headers.insert(
+            "authorization",
+            "Bearer    ".parse().unwrap(),
+        );
+        assert!(validate_auth(&config, &parts).is_ok());
+    }
+
+    #[test]
+    fn test_token_empty_bearer_prefix() {
+        let config = AuthConfig {
+            mode: AuthMode::Token,
+            token: Some("secret".to_string()),
+        };
+        let mut parts = empty_parts();
+        parts.headers.insert(
+            "authorization",
+            "".parse().unwrap(),
+        );
+        assert_eq!(
+            validate_auth(&config, &parts),
+            Err(StatusCode::UNAUTHORIZED)
+        );
+    }
+
+    #[test]
+    fn test_local_only_ignores_token() {
+        let config = AuthConfig {
+            mode: AuthMode::LocalOnly,
+            token: Some("should_not_matter".to_string()),
+        };
+        let parts = empty_parts();
+        assert!(validate_auth(&config, &parts).is_ok());
+    }
+
+    #[test]
+    fn test_token_with_special_chars() {
+        let config = AuthConfig {
+            mode: AuthMode::Token,
+            token: Some("tok-en_123!@#".to_string()),
+        };
+        let mut parts = empty_parts();
+        parts.headers.insert(
+            "authorization",
+            "Bearer tok-en_123!@#".parse().unwrap(),
+        );
+        assert!(validate_auth(&config, &parts).is_ok());
     }
 }

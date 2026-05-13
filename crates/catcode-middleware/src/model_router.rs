@@ -5,14 +5,17 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RoutingStrategy {
     /// Always use a fixed model.
+/// [`Fixed`].
     Fixed(String),
     /// Route based on task complexity.
+/// [`CostAware`].
     CostAware {
         simple_model: String,
         powerful_model: String,
         complexity_threshold: f32,
     },
     /// Try models in priority order, falling back on failure.
+/// [`Fallback`].
     Fallback(Vec<String>),
 }
 

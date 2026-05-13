@@ -246,6 +246,7 @@ pub struct OllamaProvider {
 }
 
 impl OllamaProvider {
+/// Create a new Ollama provider.
     pub fn new(base_url: String) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),

@@ -6,6 +6,33 @@
 
 CatCode is an AI coding agent that works with **11 model providers** through a unified interface. It uses harness engineering to compensate for model capability differences, rather than relying on the model itself.
 
+## Quick Start (30 seconds)
+
+```bash
+# 1. Build everything
+cargo build --release
+
+# 2. Launch TUI (interactive) — daemon auto-starts in background
+./catcode.sh
+
+# Or run components separately:
+#   ./target/release/catcode-daemon    # daemon (background API server)
+#   ./target/release/catcode-tui       # TUI (interactive terminal UI)
+#   ./target/release/catcode run "..." # CLI mode
+```
+
+Set your API key:
+```bash
+export DEEPSEEK_API_KEY="sk-your-key-here"
+# or: export ANTHROPIC_API_KEY="..."
+# or: export OPENAI_API_KEY="..."
+# see full list of providers below
+```
+
+Type a message and press Enter.
+
+---
+
 ### Key Features
 
 - **11 Model Providers** — Anthropic, DeepSeek, OpenAI, Qwen, Google Gemini, MiniMax, GLM, Ollama, OpenRouter, Volcengine + Mock
@@ -67,27 +94,6 @@ CatCode is an AI coding agent that works with **11 model providers** through a u
 | `catcode-tui` | ratatui TUI with cat mascot, thinking mode | 2,961 | 94 |
 | `catcode-cli` | Non-interactive CLI binary | 333 | — |
 | **Total** | **11 crates** | **33,562** | **849** |
-
-## Quick Start
-
-```bash
-# Run TUI (interactive)
-cargo run -p catcode-tui
-
-# Run daemon (background API server)
-cargo run -p catcode-daemon
-
-# Run CLI
-cargo run -p catcode-cli -- --help
-cargo run -p catcode-cli -- version
-cargo run -p catcode-cli -- daemon status
-
-# Run tests
-cargo test --workspace
-
-# Check code quality
-cargo clippy --workspace
-```
 
 ## Built-in Tools
 

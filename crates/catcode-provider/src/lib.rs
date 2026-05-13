@@ -20,16 +20,27 @@
 //!
 //! The [`ProviderRegistry`] manages registration, discovery, and health checks.
 
+/// The `anthropic` module.
 pub mod anthropic;
+/// The `deepseek` module.
 pub mod deepseek;
+/// The `glm` module.
 pub mod glm;
+/// The `google` module.
 pub mod google;
+/// The `minimax` module.
 pub mod minimax;
+/// The `mock` module.
 pub mod mock;
+/// The `ollama` module.
 pub mod ollama;
+/// The `openai` module.
 pub mod openai;
+/// The `openrouter` module.
 pub mod openrouter;
+/// The `qwen` module.
 pub mod qwen;
+/// The `volcengine` module.
 pub mod volcengine;
 
 pub use catcode_core::provider::*;
@@ -43,6 +54,7 @@ pub struct ProviderRegistry {
 }
 
 impl ProviderRegistry {
+/// Create an empty provider registry.
     pub fn new() -> Self {
         Self {
             providers: HashMap::new(),

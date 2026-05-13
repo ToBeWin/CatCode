@@ -5,21 +5,32 @@ use std::sync::Arc;
 /// Severity level of a review finding.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ReviewSeverity {
+/// [`Error`].
     Error,
+/// [`Warning`].
     Warning,
+/// [`Info`].
     Info,
 }
 
 /// Category of a review finding.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ReviewCategory {
+/// [`Bug`].
     Bug,
+/// [`Security`].
     Security,
+/// [`Performance`].
     Performance,
+/// [`Style`].
     Style,
+/// [`BestPractice`].
     BestPractice,
+/// [`Maintainability`].
     Maintainability,
+/// [`Documentation`].
     Documentation,
+/// [`Testing`].
     Testing,
 }
 
@@ -82,6 +93,7 @@ pub struct CodeReviewer {
 }
 
 impl CodeReviewer {
+/// Create a new empty code reviewer.
     pub fn new() -> Self {
         Self {
             files: Vec::new(),

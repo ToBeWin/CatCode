@@ -13,14 +13,18 @@ pub struct ValidationResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`ValidationIssue`]
 pub struct ValidationIssue {
     pub severity: IssueSeverity,
     pub message: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// [`IssueSeverity`]
 pub enum IssueSeverity {
+/// [`Warning`].
     Warning,
+/// [`Error`].
     Error,
 }
 

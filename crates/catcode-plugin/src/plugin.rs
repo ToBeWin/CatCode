@@ -84,6 +84,7 @@ pub struct PluginToolResult {
 }
 
 impl PluginToolResult {
+/// Create a successful plugin tool result.
     pub fn success(output: impl Into<String>) -> Self {
         Self {
             output: output.into(),
@@ -92,6 +93,7 @@ impl PluginToolResult {
         }
     }
 
+/// Create an error plugin tool result.
     pub fn error(output: impl Into<String>) -> Self {
         Self {
             output: output.into(),
@@ -105,15 +107,19 @@ impl PluginToolResult {
 #[derive(Debug, thiserror::Error)]
 pub enum PluginError {
     #[error("Plugin not found: {0}")]
+/// [`NotFound`].
     NotFound(String),
 
     #[error("Plugin already registered: {0}")]
+/// [`AlreadyRegistered`].
     AlreadyRegistered(String),
 
     #[error("Plugin load failed: {0}")]
+/// [`LoadFailed`].
     LoadFailed(String),
 
     #[error("Plugin tool execution failed: {0}")]
+/// [`ToolFailed`].
     ToolFailed(String),
 }
 
@@ -123,6 +129,7 @@ pub struct PluginRegistry {
 }
 
 impl PluginRegistry {
+/// Create an empty plugin registry.
     pub fn new() -> Self {
         Self {
             plugins: Vec::new(),

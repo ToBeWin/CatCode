@@ -20,12 +20,16 @@ pub struct SandboxPolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Network access policy for sandboxed execution.
 pub enum NetworkPolicy {
     /// No network access.
+/// [`Deny`].
     Deny,
     /// Full network access.
+/// [`Allow`].
     Allow,
     /// Only access to these domains/hosts.
+/// [`Whitelist`].
     Whitelist(Vec<String>),
 }
 

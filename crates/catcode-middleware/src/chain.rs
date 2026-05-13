@@ -5,6 +5,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 /// Type alias for the tool execution function passed to the chain.
+/// [`ToolFn`]
 pub type ToolFn =
     Arc<dyn Fn(&ToolCall) -> Pin<Box<dyn Future<Output = ToolResult> + Send>> + Send + Sync>;
 
@@ -43,10 +44,12 @@ impl MiddlewareChain {
         }
     }
 
+/// Add.
     pub fn add(&mut self, middleware: impl Middleware + 'static) {
         self.middlewares.push(Arc::new(middleware));
     }
 
+/// Add arc.
     pub fn add_arc(&mut self, middleware: Arc<dyn Middleware>) {
         self.middlewares.push(middleware);
     }

@@ -7,12 +7,16 @@ use catcode_core::OperationLevel;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalResult {
     /// Operation approved.
+/// [`Approved`].
     Approved,
     /// Approved, and auto-approve all future operations of this type in this session.
+/// [`ApprovedAlways`].
     ApprovedAlways,
     /// Operation rejected.
+/// [`Rejected`].
     Rejected,
     /// No response within timeout — defaults to rejected.
+/// [`Timeout`].
     Timeout,
 }
 
@@ -32,6 +36,7 @@ pub struct ApprovalRequest {
 }
 
 /// Decision callback type — resolves the approval request.
+/// [`ApprovalCallback`]
 pub type ApprovalCallback = Box<dyn FnOnce(ApprovalResult) + Send + 'static>;
 
 /// Gate that controls approval of sensitive/dangerous operations.
@@ -46,16 +51,21 @@ pub struct ApprovalGate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Policy for determining when human approval is required.
 pub enum ApprovalPolicy {
     /// Always approve (for testing / trusted environments).
+/// [`AutoApprove`].
     AutoApprove,
     /// Always reject dangerous operations.
+/// [`AutoReject`].
     AutoReject,
     /// Use the interactive callback.
+/// [`Interactive`].
     Interactive,
 }
 
 impl ApprovalGate {
+/// Create a new approval gate with the given policy.
     pub fn new(default_policy: ApprovalPolicy) -> Self {
         Self {
             auto_approved: Arc::new(Mutex::new(HashSet::new())),

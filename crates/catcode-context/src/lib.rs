@@ -20,11 +20,17 @@
 //! - **SessionMemory** — file-based memory (markdown files with frontmatter)
 //! - **ArchiveMemory** — in-memory structured fact store
 
+/// The `archive_memory` module.
 pub mod archive_memory;
+/// The `compressor` module.
 pub mod compressor;
+/// The `context_stack` module.
 pub mod context_stack;
+/// The `prompt_cache` module.
 pub mod prompt_cache;
+/// The `session_memory` module.
 pub mod session_memory;
+/// The `token_budget` module.
 pub mod token_budget;
 
 pub use archive_memory::ArchiveMemory;

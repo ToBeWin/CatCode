@@ -4,10 +4,12 @@ use crate::backend::{NativeSandbox, SandboxBackend};
 
 /// Selects the best available sandbox backend.
 pub struct SandboxSelector {
+/// Selects the best available sandbox backend.
     backends: Vec<(String, Arc<dyn SandboxBackend>)>,
 }
 
 impl SandboxSelector {
+/// Create a new empty sandbox selector.
     pub fn new() -> Self {
         let mut selector = Self {
             backends: Vec::new(),

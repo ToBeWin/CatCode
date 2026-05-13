@@ -290,6 +290,7 @@ pub struct DeepSeekProvider {
 }
 
 impl DeepSeekProvider {
+/// Create a new DeepSeek provider.
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,

@@ -9,10 +9,13 @@ use std::time::Instant;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CircuitState {
     /// Normal operation — requests pass through.
+/// [`Closed`].
     Closed,
     /// Too many failures — requests are blocked immediately.
+/// [`Open`].
     Open,
     /// Probing — a limited number of requests pass through to test recovery.
+/// [`HalfOpen`].
     HalfOpen,
 }
 

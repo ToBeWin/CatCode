@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 // === OpenRouter model list ===
 
+/// Built-in OpenRouter model identifiers for reference.
 pub const OPENROUTER_MODELS: &[(&str, &str, f64, f64, u64, ModelTier)] = &[
     ("openrouter/auto", "OpenRouter Auto", 0.0, 0.0, 128_000, ModelTier::Balanced),
     ("anthropic/claude-sonnet-4", "Claude Sonnet 4", 3.0, 15.0, 200_000, ModelTier::Powerful),
@@ -248,6 +249,7 @@ fn convert_response(resp: OpenRouterResponse, model: &str) -> Result<ChatRespons
 
 // === OpenRouter Provider ===
 
+/// OpenRouter multi-model provider proxy.
 pub struct OpenRouterProvider {
     api_key: String,
     base_url: String,
@@ -255,6 +257,7 @@ pub struct OpenRouterProvider {
 }
 
 impl OpenRouterProvider {
+/// Create a new OpenRouter provider.
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,
@@ -268,6 +271,7 @@ impl OpenRouterProvider {
     }
 }
 
+/// [`OpenRouterTokenCounter`]
 pub struct OpenRouterTokenCounter;
 
 impl TokenCounter for OpenRouterTokenCounter {

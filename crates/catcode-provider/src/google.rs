@@ -267,6 +267,7 @@ pub struct GoogleProvider {
 }
 
 impl GoogleProvider {
+/// Create a new Google (Gemini) provider.
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,
@@ -283,6 +284,7 @@ impl GoogleProvider {
     }
 }
 
+/// [`GoogleTokenCounter`]
 pub struct GoogleTokenCounter;
 
 impl TokenCounter for GoogleTokenCounter {

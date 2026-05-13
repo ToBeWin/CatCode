@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// [`Diagnostic`]
 pub struct Diagnostic {
     pub file: PathBuf,
     pub line: u64,
@@ -17,20 +18,27 @@ pub struct Diagnostic {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// [`DiagnosticSeverity`]
 pub enum DiagnosticSeverity {
+/// [`Error`].
     Error,
+/// [`Warning`].
     Warning,
+/// [`Info`].
     Info,
+/// [`Hint`].
     Hint,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`DiagnosticFile`]
 pub struct DiagnosticFile {
     pub file: PathBuf,
     pub diagnostics: Vec<Diagnostic>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`DiagnosticAttachment`]
 pub struct DiagnosticAttachment {
     pub summary: String,
     pub details: Vec<String>,
@@ -43,10 +51,17 @@ struct DiagnosticKey {
     message: String,
 }
 
+/// [`DiagnosticRegistry`]
 pub struct DiagnosticRegistry {
     max_per_file: usize,
     max_total: usize,
     delivered_cache: LruCache<PathBuf, HashSet<DiagnosticKey>>,
+}
+
+impl Default for DiagnosticRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DiagnosticRegistry {
@@ -58,6 +73,7 @@ impl DiagnosticRegistry {
         }
     }
 
+/// Register.
     pub fn register(&mut self, file: &Path, incoming: Vec<Diagnostic>) -> Vec<Diagnostic> {
         if !self.delivered_cache.contains(file) {
             self.delivered_cache.put(file.to_path_buf(), HashSet::new());
@@ -83,10 +99,12 @@ impl DiagnosticRegistry {
         new_diags
     }
 
+/// Clear file.
     pub fn clear_file(&mut self, file: &Path) {
         self.delivered_cache.pop(file);
     }
 
+/// Build attachment.
     pub fn build_attachment(&self, files_with_diags: &[DiagnosticFile]) -> Option<DiagnosticAttachment> {
         let mut all: Vec<&Diagnostic> = Vec::new();
         for df in files_with_diags {
@@ -143,6 +161,7 @@ impl DiagnosticRegistry {
     }
 }
 
+/// [`LspWatcher`]
 pub struct LspWatcher {
     registry: Arc<Mutex<DiagnosticRegistry>>,
     watch_paths: Vec<PathBuf>,
@@ -156,15 +175,17 @@ impl LspWatcher {
         }
     }
 
+/// Add watch.
     pub fn add_watch(&mut self, path: PathBuf) {
         self.watch_paths.push(path);
     }
 
+/// Poll.
     pub fn poll(&self) -> Vec<DiagnosticFile> {
         let mut results = Vec::new();
         for path in &self.watch_paths {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                if let Ok(diags) = serde_json::from_str::<Vec<Diagnostic>>(&content) {
+            if let Ok(content) = std::fs::read_to_string(path)
+                && let Ok(diags) = serde_json::from_str::<Vec<Diagnostic>>(&content) {
                     let mut registry = self.registry.blocking_lock();
                     let new = registry.register(path, diags);
                     if !new.is_empty() {
@@ -174,11 +195,11 @@ impl LspWatcher {
                         });
                     }
                 }
-            }
         }
         results
     }
 
+/// Clear file.
     pub fn clear_file(&self, path: &Path) {
         let mut registry = self.registry.blocking_lock();
         registry.clear_file(path);

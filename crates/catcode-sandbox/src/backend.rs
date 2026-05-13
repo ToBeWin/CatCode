@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use crate::policy::SandboxPolicy;
 
 /// Output from sandbox execution.
+/// A command to execute within the sandbox.
 #[derive(Debug, Clone)]
 pub struct SandboxOutput {
     pub stdout: String,
@@ -21,6 +22,7 @@ pub struct SandboxCommand {
 }
 
 impl SandboxCommand {
+/// Create a new sandbox command with the given program.
     pub fn new(program: impl Into<String>) -> Self {
         Self {
             program: program.into(),
@@ -30,21 +32,25 @@ impl SandboxCommand {
         }
     }
 
+/// Add a single argument to the command.
     pub fn arg(mut self, arg: impl Into<String>) -> Self {
         self.args.push(arg.into());
         self
     }
 
+/// Add multiple arguments to the command.
     pub fn args(mut self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.args.extend(args.into_iter().map(Into::into));
         self
     }
 
+/// Set an environment variable for the command.
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env.push((key.into(), value.into()));
         self
     }
 
+/// Set the working directory for the command.
     pub fn working_dir(mut self, dir: std::path::PathBuf) -> Self {
         self.working_dir = Some(dir);
         self
@@ -72,18 +78,24 @@ pub trait SandboxBackend: Send + Sync {
 #[derive(Debug, thiserror::Error)]
 pub enum SandboxError {
     #[error("Execution timed out after {0}s")]
+/// [`Timeout`].
     Timeout(u64),
 
     #[error("Path denied by policy: {0}")]
+/// [`PathDenied`].
     PathDenied(String),
 
     #[error("Backend not available: {0}")]
+/// [`NotAvailable`].
     NotAvailable(String),
 
     #[error("Execution failed: {0}")]
+/// [`ExecutionFailed`].
     ExecutionFailed(String),
 
     #[error("IO error: {0}")]
+/// Sandbox backend that executes commands directly (no containerization).
+/// [`IoError`].
     IoError(#[from] std::io::Error),
 }
 
@@ -94,6 +106,7 @@ pub enum SandboxError {
 pub struct NativeSandbox;
 
 impl NativeSandbox {
+/// Create a new native sandbox backend.
     pub fn new() -> Self {
         Self
     }

@@ -56,10 +56,13 @@ pub struct McpToolResult {
 /// Content block in an MCP response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
+/// Content block types from MCP tool responses.
 pub enum McpContentBlock {
     #[serde(rename = "text")]
+/// [`Text`].
     Text { text: String },
     #[serde(rename = "image")]
+/// [`Image`].
     Image {
         data: String,
         mime_type: String,
@@ -70,21 +73,27 @@ pub enum McpContentBlock {
 #[derive(Debug, thiserror::Error)]
 pub enum McpError {
     #[error("MCP server not found: {0}")]
+/// [`ServerNotFound`].
     ServerNotFound(String),
 
     #[error("MCP server not running: {0}")]
+/// [`ServerNotRunning`].
     ServerNotRunning(String),
 
     #[error("MCP protocol error: {0}")]
+/// [`ProtocolError`].
     ProtocolError(String),
 
     #[error("MCP tool not found: {0}")]
+/// [`ToolNotFound`].
     ToolNotFound(String),
 
     #[error("MCP connection failed: {0}")]
+/// [`ConnectionFailed`].
     ConnectionFailed(String),
 
     #[error("IO error: {0}")]
+/// [`IoError`].
     IoError(#[from] std::io::Error),
 }
 
@@ -98,6 +107,7 @@ pub struct McpConnection {
 }
 
 impl McpConnection {
+/// Create a new MCP server configuration.
     pub fn new(config: McpServerConfig) -> Self {
         Self {
             config,
@@ -179,6 +189,7 @@ pub struct McpRegistry {
 }
 
 impl McpRegistry {
+/// Create an empty MCP registry.
     pub fn new() -> Self {
         Self {
             connections: Vec::new(),

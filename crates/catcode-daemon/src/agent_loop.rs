@@ -73,6 +73,7 @@ pub struct AgentLoop {
 }
 
 impl AgentLoop {
+/// Create a new agent loop with the given provider, tools, middleware, context, and budget.
     pub fn new(
         provider: Arc<dyn Provider>,
         tools: Arc<ToolRegistry>,
@@ -101,36 +102,43 @@ impl AgentLoop {
         }
     }
 
+/// Set the maximum number of turns before forcing stop.
     pub fn with_max_turns(mut self, max_turns: u64) -> Self {
         self.max_turns = max_turns;
         self
     }
 
+/// Attach a model router for intelligent model selection.
     pub fn with_model_router(mut self, router: ModelRouter) -> Self {
         self.model_router = Some(router);
         self
     }
 
+/// Enable or disable automatic plan generation.
     pub fn with_auto_plan(mut self, enabled: bool) -> Self {
         self.auto_plan_enabled = enabled;
         self
     }
 
+/// Enable or disable self-healing on tool failures.
     pub fn with_self_heal(mut self, enabled: bool) -> Self {
         self.self_heal_enabled = enabled;
         self
     }
 
+/// Enable or disable sub-agent dispatching.
     pub fn with_subagent_dispatch(mut self, enabled: bool) -> Self {
         self.subagent_dispatch_enabled = enabled;
         self
     }
 
+/// Enable or disable model routing.
     pub fn with_model_routing(mut self, enabled: bool) -> Self {
         self.model_routing_enabled = enabled;
         self
     }
 
+/// Attach LSP diagnostic registry for compiler feedback.
     pub fn with_lsp(mut self, registry: Arc<Mutex<DiagnosticRegistry>>) -> Self {
         self.lsp_registry = Some(registry);
         self
@@ -635,12 +643,15 @@ impl AgentLoop {
 #[derive(Debug, thiserror::Error)]
 pub enum AgentLoopError {
     #[error("Provider error: {0}")]
+/// [`ProviderError`].
     ProviderError(String),
 
     #[error("Token budget exhausted")]
+/// [`BudgetExhausted`].
     BudgetExhausted,
 
     #[error("Max turns ({0}) exceeded")]
+/// [`MaxTurnsExceeded`].
     MaxTurnsExceeded(u64),
 }
 

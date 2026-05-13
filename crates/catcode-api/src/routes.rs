@@ -31,6 +31,7 @@ pub fn system_routes() -> Router<AppState> {
 // === Request/Response types ===
 
 #[derive(Serialize)]
+/// JSON response body for session operations.
 pub struct SessionResponse {
     pub id: String,
     pub name: String,
@@ -41,6 +42,7 @@ pub struct SessionResponse {
 }
 
 #[derive(Deserialize, Serialize)]
+/// Request body for creating a new session.
 pub struct CreateSessionRequest {
     pub name: String,
     pub project_dir: String,
@@ -49,11 +51,13 @@ pub struct CreateSessionRequest {
 }
 
 #[derive(Deserialize, Serialize)]
+/// Request body for sending a message to a session.
 pub struct SendMessageRequest {
     pub content: String,
 }
 
 #[derive(Serialize)]
+/// Generic JSON API response wrapper.
 pub struct ApiResponse<T: Serialize> {
     pub ok: bool,
     pub data: Option<T>,
@@ -61,6 +65,7 @@ pub struct ApiResponse<T: Serialize> {
 }
 
 impl<T: Serialize> ApiResponse<T> {
+/// Create a success API response.
     pub fn success(data: T) -> Self {
         Self {
             ok: true,
@@ -69,6 +74,7 @@ impl<T: Serialize> ApiResponse<T> {
         }
     }
 
+/// Create an error API response.
     pub fn error(msg: impl Into<String>) -> Self {
         Self {
             ok: false,
@@ -295,5 +301,171 @@ mod tests {
 
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_session_not_found() {
+        let app = crate::build_router(test_state());
+        let req = Request::builder()
+            .uri("/api/v1/sessions/nonexistent-id")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(!json["ok"].as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_delete_session() {
+        let app = crate::build_router(test_state());
+        let req = Request::builder()
+            .method("DELETE")
+            .uri("/api/v1/sessions/test-id")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_pause_session() {
+        let app = crate::build_router(test_state());
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/sessions/test-id/pause")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_resume_session() {
+        let app = crate::build_router(test_state());
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/sessions/test-id/resume")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_list_providers() {
+        let app = crate::build_router(test_state());
+        let req = Request::builder()
+            .uri("/api/v1/providers")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_create_session_with_all_fields() {
+        let app = crate::build_router(test_state());
+        let body = serde_json::to_string(&CreateSessionRequest {
+            name: "full-test".to_string(),
+            project_dir: "/home/user/project".to_string(),
+            model_id: Some("claude-opus-4".to_string()),
+            provider_id: Some("anthropic".to_string()),
+        })
+        .unwrap();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/sessions")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["ok"].as_bool().unwrap());
+        assert_eq!(json["data"]["name"].as_str().unwrap(), "full-test");
+        assert_eq!(json["data"]["model_id"].as_str().unwrap(), "claude-opus-4");
+    }
+
+    #[tokio::test]
+    async fn test_send_message_response_body() {
+        let app = crate::build_router(test_state());
+        let body = serde_json::to_string(&SendMessageRequest {
+            content: "test message".to_string(),
+        })
+        .unwrap();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/sessions/sess-001/message")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["ok"].as_bool().unwrap());
+        assert_eq!(json["data"]["message"].as_str().unwrap(), "test message");
+    }
+
+    #[tokio::test]
+    async fn test_health_response_body() {
+        let app = crate::build_router(test_state());
+        let req = Request::builder()
+            .uri("/api/v1/health")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"].as_str().unwrap(), "ok");
+    }
+
+    #[tokio::test]
+    async fn test_version_response_body() {
+        let app = crate::build_router(test_state());
+        let req = Request::builder()
+            .uri("/api/v1/version")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["name"].as_str().unwrap(), "CatCode");
+    }
+
+    #[tokio::test]
+    async fn test_create_session_request_serialization() {
+        let req = CreateSessionRequest {
+            name: "test".to_string(),
+            project_dir: "/tmp".to_string(),
+            model_id: Some("gpt-4".to_string()),
+            provider_id: Some("openai".to_string()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("gpt-4"));
+        assert!(json.contains("openai"));
+    }
+
+    #[tokio::test]
+    async fn test_send_message_request_serialization() {
+        let req = SendMessageRequest {
+            content: "hello world".to_string(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("hello world"));
     }
 }

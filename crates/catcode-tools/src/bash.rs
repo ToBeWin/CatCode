@@ -12,11 +12,17 @@ const MAX_OUTPUT_BYTES: usize = 1024 * 1024; // 1 MB
 /// Progress event emitted during bash execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BashProgress {
+/// [`Started`].
     Started { command: String },
+/// [`Stdout`].
     Stdout { data: String, elapsed_secs: f64 },
+/// [`Stderr`].
     Stderr { data: String, elapsed_secs: f64 },
+/// [`Completed`].
     Completed { exit_code: i32, duration_secs: f64 },
+/// [`TimedOut`].
     TimedOut { duration_secs: f64 },
+/// [`Backgrounded`].
     Backgrounded { task_id: String },
 }
 
@@ -42,6 +48,7 @@ impl BashTool {
         }
     }
 
+/// Configure timeout.
     pub fn with_timeout(timeout_secs: u64) -> Self {
         Self { timeout_secs }
     }
@@ -52,7 +59,7 @@ impl BashTool {
     /// lifecycle events including stdout/stderr lines, timing, and auto-background.
     pub async fn execute_streaming(
         command: &str,
-        timeout_secs: u64,
+        _timeout_secs: u64,
         working_dir: Option<&std::path::Path>,
     ) -> (ToolResult, Vec<BashProgress>) {
         let start = Instant::now();
@@ -195,10 +202,10 @@ impl BashTool {
     pub fn extract_hints(output: &str) -> Vec<String> {
         let mut hints = Vec::new();
         for line in output.lines() {
-            if let Some(hint) = line.strip_prefix("[catcode-hint:") {
-                if let Some(end) = hint.find(']') {
-                    hints.push(hint[..end].trim().to_string());
-                }
+            if let Some(hint) = line.strip_prefix("[catcode-hint:")
+                && let Some(end) = hint.find(']')
+            {
+                hints.push(hint[..end].trim().to_string());
             }
         }
         hints

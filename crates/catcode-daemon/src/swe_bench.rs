@@ -112,6 +112,7 @@ impl SweBenchResult {
 /// Test outcomes for a SWE-Bench instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[derive(Default)]
+/// Outcome of SWE-Bench test execution for an instance.
 pub struct TestResults {
     pub fail_to_pass: Vec<String>,
     pub pass_to_pass: Vec<String>,

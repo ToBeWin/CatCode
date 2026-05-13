@@ -6,10 +6,13 @@ use tokio::sync::mpsc;
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     /// A key was pressed.
+/// [`Key`].
     Key(KeyEvent),
     /// Terminal was resized.
+/// [`Resize`].
     Resize(u16, u16),
     /// Tick event for periodic updates.
+/// [`Tick`].
     Tick,
 }
 

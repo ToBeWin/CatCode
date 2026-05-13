@@ -12,6 +12,7 @@ use tracing::warn;
 // ===== Core Types =====
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Full security scan report for a directory.
 pub struct SecurityReport {
     pub target: String,
     pub scanned_at: String,
@@ -22,6 +23,7 @@ pub struct SecurityReport {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Aggregate counts by severity for a security scan.
 pub struct SecuritySummary {
     pub total_findings: usize,
     pub critical: usize,
@@ -32,6 +34,7 @@ pub struct SecuritySummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// A single security finding from scanning.
 pub struct SecurityFinding {
     pub severity: Severity,
     pub category: FindingCategory,
@@ -47,11 +50,17 @@ pub struct SecurityFinding {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+/// Severity level for a security finding.
 pub enum Severity {
+/// [`Critical`].
     Critical,
+/// [`High`].
     High,
+/// [`Medium`].
     Medium,
+/// [`Low`].
     Low,
+/// [`Info`].
     Info,
 }
 
@@ -81,20 +90,31 @@ impl Ord for Severity {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+/// Category of a security finding.
 pub enum FindingCategory {
+/// [`Secret`].
     Secret,
+/// [`DependencyVuln`].
     DependencyVuln,
+/// [`CodeInjection`].
     CodeInjection,
+/// [`PathTraversal`].
     PathTraversal,
+/// [`UnsafeCrypto`].
     UnsafeCrypto,
+/// [`UnsafeNetwork`].
     UnsafeNetwork,
+/// [`InformationDisclosure`].
     InformationDisclosure,
+/// [`Configuration`].
     Configuration,
+/// [`BestPractice`].
     BestPractice,
 }
 
 // ===== Scanner =====
 
+/// Scans files and directories for security issues.
 pub struct SecurityScanner {
     scan_secrets: bool,
     scan_injection: bool,
@@ -114,30 +134,36 @@ impl Default for SecurityScanner {
 }
 
 impl SecurityScanner {
+/// Create a default security scanner with all checks enabled.
     pub fn new() -> Self {
         Self::default()
     }
 
+/// Enable or disable secret scanning.
     pub fn with_secrets(mut self, enabled: bool) -> Self {
         self.scan_secrets = enabled;
         self
     }
 
+/// Enable or disable code injection scanning.
     pub fn with_injection(mut self, enabled: bool) -> Self {
         self.scan_injection = enabled;
         self
     }
 
+/// Enable or disable dependency scanning.
     pub fn with_dependencies(mut self, enabled: bool) -> Self {
         self.scan_dependencies = enabled;
         self
     }
 
+/// Enable or disable configuration scanning.
     pub fn with_config(mut self, enabled: bool) -> Self {
         self.scan_config = enabled;
         self
     }
 
+/// Scan a single file for security issues.
     pub fn scan_file(&self, path: &Path) -> Vec<SecurityFinding> {
         let content = match fs::read_to_string(path) {
             Ok(c) => c,
@@ -156,6 +182,7 @@ impl SecurityScanner {
         findings
     }
 
+/// Scan an entire directory tree for security issues.
     pub fn scan_directory(&self, dir: &Path) -> SecurityReport {
         let start = Instant::now();
         let files = collect_source_files(dir);
@@ -201,6 +228,7 @@ impl SecurityScanner {
         }
     }
 
+/// Scan dependency files for known vulnerabilities.
     pub fn scan_dependencies(&self, dir: &Path) -> Vec<SecurityFinding> {
         let mut findings = Vec::new();
 

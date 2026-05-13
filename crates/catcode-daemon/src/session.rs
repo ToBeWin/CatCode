@@ -4,19 +4,25 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 /// Unique identifier for a session.
+/// [`SessionId`]
 pub type SessionId = String;
 
 /// Current state of a session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Current state of a session in its lifecycle.
 pub enum SessionState {
     /// Agent is actively running.
+/// [`Running`].
     Running,
     /// Agent is paused, waiting for user input.
+/// [`Paused`].
     Paused,
     /// Task completed successfully.
+/// [`Completed`].
     Completed,
     /// Session failed with an error message.
+/// [`Failed`].
     Failed(String),
 }
 

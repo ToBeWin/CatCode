@@ -52,6 +52,7 @@ pub struct BenchmarkReport {
 }
 
 impl BenchmarkReport {
+/// Aggregate benchmark results into a report.
     pub fn from_results(provider_id: &str, model_id: &str, results: Vec<BenchmarkResult>) -> Self {
         let total = results.len();
         let passed = results.iter().filter(|r| r.passed).count();
@@ -83,6 +84,7 @@ impl BenchmarkReport {
         }
     }
 
+/// One-line summary of the benchmark report.
     pub fn summary_line(&self) -> String {
         format!(
             "{}/{}: {}/{} passed ({:.0}%) | avg {}ms | ${:.4} | {}ms avg latency",

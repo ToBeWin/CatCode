@@ -8,6 +8,7 @@ use crate::types::{ChatRequest, ChatResponse, Message, TokenUsage, ToolCall};
 // === AgentContext ===
 
 #[derive(Debug)]
+/// [`AgentContext`]
 pub struct AgentContext {
     pub session_id: String,
     pub messages: Vec<Message>,
@@ -17,6 +18,7 @@ pub struct AgentContext {
 }
 
 #[derive(Debug, Clone)]
+/// [`ToolOutput`]
 pub struct ToolOutput {
     pub call_id: String,
     pub tool_name: String,
@@ -34,10 +36,12 @@ impl AgentContext {
         }
     }
 
+/// Add message.
     pub fn add_message(&mut self, message: Message) {
         self.messages.push(message);
     }
 
+/// Add tool output.
     pub fn add_tool_output(&mut self, call_id: String, tool_name: String, result: ToolResult) {
         self.tool_outputs.push_back(ToolOutput {
             call_id,
@@ -46,20 +50,24 @@ impl AgentContext {
         });
     }
 
+/// Record usage.
     pub fn record_usage(&mut self, usage: TokenUsage) {
         self.usage_history.push(usage);
     }
 
+/// Total usage.
     pub fn total_usage(&self) -> TokenUsage {
         self.usage_history
             .iter()
             .fold(TokenUsage::default(), |acc, u| acc + u.clone())
     }
 
+/// Set the metadata.
     pub fn set_metadata(&mut self, key: impl Into<String>, value: serde_json::Value) {
         self.metadata.insert(key.into(), value);
     }
 
+/// Get the metadata.
     pub fn get_metadata(&self, key: &str) -> Option<&serde_json::Value> {
         self.metadata.get(key)
     }
@@ -76,6 +84,7 @@ type ToolCallHandler<'a> = Box<
         + 'a,
 >;
 
+/// [`ToolCallNext`]
 pub struct ToolCallNext<'a> {
     inner: std::sync::Arc<ToolCallHandler<'a>>,
 }
@@ -99,6 +108,7 @@ impl<'a> ToolCallNext<'a> {
         }
     }
 
+/// Execute.
     pub async fn execute(&self, call: &ToolCall) -> ToolResult {
         (self.inner)(call).await
     }
@@ -107,6 +117,7 @@ impl<'a> ToolCallNext<'a> {
 // === Middleware Trait ===
 
 #[async_trait]
+/// [`Middleware`]
 pub trait Middleware: Send + Sync {
     fn name(&self) -> &str;
 
@@ -150,6 +161,7 @@ mod tests {
         assert_eq!(ctx.session_id, "session_123");
         assert!(ctx.messages.is_empty());
         assert!(ctx.tool_outputs.is_empty());
+        assert!(ctx.metadata.is_empty());
     }
 
     #[test]
@@ -201,5 +213,80 @@ mod tests {
         );
         assert_eq!(ctx.tool_outputs.len(), 1);
         assert_eq!(ctx.tool_outputs[0].tool_name, "read_file");
+        assert_eq!(ctx.tool_outputs[0].call_id, "call_1");
+    }
+
+    #[test]
+    fn test_agent_context_multiple_messages() {
+        let mut ctx = AgentContext::new("session_1");
+        ctx.add_message(Message::system("be helpful"));
+        ctx.add_message(Message::user("hello"));
+        ctx.add_message(Message::assistant("hi!"));
+        assert_eq!(ctx.messages.len(), 3);
+    }
+
+    #[test]
+    fn test_agent_context_tool_output_with_error() {
+        let mut ctx = AgentContext::new("session_1");
+        ctx.add_tool_output(
+            "call_err".to_string(),
+            "bash".to_string(),
+            ToolResult::error("command failed"),
+        );
+        assert_eq!(ctx.tool_outputs.len(), 1);
+        assert!(ctx.tool_outputs[0].result.is_error);
+    }
+
+    #[test]
+    fn test_agent_context_record_usage_zero() {
+        let mut ctx = AgentContext::new("session_1");
+        ctx.record_usage(TokenUsage::default());
+        let total = ctx.total_usage();
+        assert_eq!(total.input_tokens, 0);
+        assert_eq!(total.output_tokens, 0);
+    }
+
+    #[test]
+    fn test_agent_context_total_usage_empty() {
+        let ctx = AgentContext::new("session_1");
+        let total = ctx.total_usage();
+        assert_eq!(total, TokenUsage::default());
+    }
+
+    #[test]
+    fn test_agent_context_metadata_overwrite() {
+        let mut ctx = AgentContext::new("session_1");
+        ctx.set_metadata("key", serde_json::json!("first"));
+        assert_eq!(ctx.get_metadata("key"), Some(&serde_json::json!("first")));
+        ctx.set_metadata("key", serde_json::json!("second"));
+        assert_eq!(ctx.get_metadata("key"), Some(&serde_json::json!("second")));
+    }
+
+    #[test]
+    fn test_tool_output_creation() {
+        let output = ToolOutput {
+            call_id: "call_1".to_string(),
+            tool_name: "read_file".to_string(),
+            result: ToolResult::success("data"),
+        };
+        assert_eq!(output.call_id, "call_1");
+        assert_eq!(output.tool_name, "read_file");
+        assert!(!output.result.is_error);
+    }
+
+    #[test]
+    fn test_agent_context_multiple_recordings() {
+        let mut ctx = AgentContext::new("session_1");
+        for _ in 0..5 {
+            ctx.record_usage(TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                cache_read_tokens: 0,
+                cache_creation_tokens: 0,
+            });
+        }
+        let total = ctx.total_usage();
+        assert_eq!(total.input_tokens, 50);
+        assert_eq!(total.output_tokens, 25);
     }
 }

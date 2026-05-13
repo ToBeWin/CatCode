@@ -10,20 +10,28 @@ use tokio::sync::mpsc;
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     /// Agent produced text output.
+/// [`AgentMessage`].
     AgentMessage(String),
     /// Real-time thinking content delta.
+/// [`Thinking`].
     Thinking(String),
     /// Agent is calling a tool.
+/// [`ToolCall`].
     ToolCall { tool: String, args: String },
     /// Tool execution completed.
+/// [`ToolResult`].
     ToolResult { tool: String, output: String },
     /// Status updates during processing (e.g. "Calling DeepSeek...").
+/// [`StatusUpdate`].
     StatusUpdate(String),
     /// Agent finished processing.
+/// [`Completed`].
     Completed,
     /// Agent encountered an error.
+/// [`Error`].
     Error(String),
     /// Token usage update.
+/// [`TokenUpdate`].
     TokenUpdate { input: u64, output: u64, cache: u64 },
 }
 
@@ -31,8 +39,10 @@ pub enum AgentEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputMode {
     /// Normal mode — typing messages to the agent.
+/// [`Normal`].
     Normal,
     /// Command mode — typing a `/` command.
+/// [`Command`].
     Command,
 }
 
@@ -40,14 +50,19 @@ pub enum InputMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CatState {
     /// Idle — cat is sleeping.
+/// [`Idle`].
     Idle,
     /// Thinking — cat is pondering.
+/// [`Thinking`].
     Thinking,
     /// Executing — cat is working.
+/// [`Executing`].
     Executing,
     /// Error — cat is surprised.
+/// [`Error`].
     Error,
     /// Done — cat is happy.
+/// [`Done`].
     Done,
 }
 
@@ -62,6 +77,7 @@ impl CatState {
         }
     }
 
+/// Label.
     pub fn label(&self) -> &'static str {
         match self {
             CatState::Idle => "sleeping",
@@ -83,19 +99,26 @@ const CAT_DONE: &str = "  =^.^=~";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentMode {
     /// Plan mode — agent only analyzes and plans, no tool execution.
+/// [`Plan`].
     Plan,
     /// Act mode — agent executes tools normally (default).
+/// [`Act`].
     Act,
     /// Auto mode — agent plans first, then executes after user approval.
+/// [`Auto`].
     Auto,
 }
 
 /// Goal status.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GoalStatus {
+/// [`Active`].
     Active,
+/// [`Paused`].
     Paused,
+/// [`BudgetLimited`].
     BudgetLimited,
+/// [`Complete`].
     Complete,
 }
 
@@ -118,6 +141,7 @@ impl AgentMode {
         }
     }
 
+/// Description.
     pub fn description(&self) -> &'static str {
         match self {
             AgentMode::Plan => "Planning only — no tool execution",
@@ -136,10 +160,15 @@ pub struct ChatMessage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// [`MessageRole`]
 pub enum MessageRole {
+/// [`User`].
     User,
+/// [`Assistant`].
     Assistant,
+/// [`System`].
     System,
+/// [`Tool`].
     Tool,
 }
 
@@ -202,6 +231,7 @@ pub struct App {
 }
 
 #[derive(Debug, Clone, Default)]
+/// [`TokenDisplay`]
 pub struct TokenDisplay {
     pub input_tokens: u64,
     pub output_tokens: u64,

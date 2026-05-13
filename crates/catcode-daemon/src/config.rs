@@ -15,6 +15,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Daemon server configuration.
 pub struct DaemonConfig {
     pub host: String,
     pub port: u16,
@@ -24,6 +25,7 @@ pub struct DaemonConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Default provider and model settings.
 pub struct DefaultsConfig {
     pub provider: String,
     pub model: String,
@@ -31,6 +33,7 @@ pub struct DefaultsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Token budget limits and thresholds.
 pub struct BudgetConfig {
     pub session_limit_tokens: u64,
     pub per_request_limit_tokens: u64,
@@ -38,6 +41,7 @@ pub struct BudgetConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Context management configuration (TOML schema).
 pub struct ContextConfigToml {
     pub compression_enabled: bool,
     pub dedup_tool_outputs: bool,
@@ -45,6 +49,7 @@ pub struct ContextConfigToml {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Logging and observability settings.
 pub struct ObservabilityConfig {
     pub log_level: String,
     pub log_format: String,

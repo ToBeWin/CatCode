@@ -6,16 +6,22 @@ use std::ops::Add;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+/// [`Role`]
 pub enum Role {
+/// [`System`].
     System,
+/// [`User`].
     User,
+/// [`Assistant`].
     Assistant,
+/// [`Tool`].
     Tool,
 }
 
 // === Message ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`Message`]
 pub struct Message {
     pub role: Role,
     pub content: String,
@@ -38,6 +44,7 @@ impl Message {
         }
     }
 
+/// Assistant.
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
             role: Role::Assistant,
@@ -48,6 +55,7 @@ impl Message {
         }
     }
 
+/// Assistant with tool calls.
     pub fn assistant_with_tool_calls(
         content: impl Into<String>,
         tool_calls: Vec<ToolCall>,
@@ -61,6 +69,7 @@ impl Message {
         }
     }
 
+/// Tool result.
     pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             role: Role::Tool,
@@ -71,6 +80,7 @@ impl Message {
         }
     }
 
+/// System.
     pub fn system(content: impl Into<String>) -> Self {
         Self {
             role: Role::System,
@@ -85,6 +95,7 @@ impl Message {
 // === ToolCall ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`ToolCall`]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
@@ -95,15 +106,19 @@ pub struct ToolCall {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+/// [`ContentBlock`]
 pub enum ContentBlock {
+/// [`Text`].
     Text {
         text: String,
     },
+/// [`ToolCall`].
     ToolCall {
         id: String,
         name: String,
         args: serde_json::Value,
     },
+/// [`Thinking`].
     Thinking {
         text: String,
     },
@@ -114,14 +129,17 @@ impl ContentBlock {
         matches!(self, Self::Text { .. })
     }
 
+/// Check if tool call.
     pub fn is_tool_call(&self) -> bool {
         matches!(self, Self::ToolCall { .. })
     }
 
+/// Check if thinking.
     pub fn is_thinking(&self) -> bool {
         matches!(self, Self::Thinking { .. })
     }
 
+/// Text content.
     pub fn text_content(&self) -> Option<&str> {
         match self {
             Self::Text { text } | Self::Thinking { text } => Some(text),
@@ -133,6 +151,7 @@ impl ContentBlock {
 // === TokenUsage ===
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// [`TokenUsage`]
 pub struct TokenUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -145,6 +164,7 @@ impl TokenUsage {
         self.input_tokens + self.output_tokens
     }
 
+/// Cache savings ratio.
     pub fn cache_savings_ratio(&self) -> f64 {
         let total_input = self.input_tokens + self.cache_read_tokens;
         if total_input == 0 {
@@ -172,10 +192,15 @@ impl Add for TokenUsage {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// [`StopReason`]
 pub enum StopReason {
+/// [`EndTurn`].
     EndTurn,
+/// [`MaxTokens`].
     MaxTokens,
+/// [`ToolUse`].
     ToolUse,
+/// [`StopSequence`].
     StopSequence,
 }
 
@@ -193,6 +218,7 @@ impl fmt::Display for StopReason {
 // === ChatRequest ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`ChatRequest`]
 pub struct ChatRequest {
     pub model: String,
     pub messages: Vec<Message>,
@@ -210,6 +236,7 @@ pub struct ChatRequest {
 // === ChatResponse ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`ChatResponse`]
 pub struct ChatResponse {
     pub content: Vec<ContentBlock>,
     pub usage: TokenUsage,
@@ -226,10 +253,12 @@ impl ChatResponse {
             .join("")
     }
 
+/// Check if tool calls exists.
     pub fn has_tool_calls(&self) -> bool {
         self.content.iter().any(|b| b.is_tool_call())
     }
 
+/// Get the tool calls.
     pub fn get_tool_calls(&self) -> Vec<(String, String, serde_json::Value)> {
         self.content
             .iter()
@@ -247,6 +276,7 @@ impl ChatResponse {
 // === ToolDefinition ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// [`ToolDefinition`]
 pub struct ToolDefinition {
     pub name: String,
     pub description: String,
@@ -442,5 +472,163 @@ mod tests {
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("deepseek-chat"));
         assert!(json.contains("Hello"));
+    }
+
+    #[test]
+    fn test_content_block_empty_text() {
+        let block = ContentBlock::Text { text: String::new() };
+        assert!(block.is_text());
+        assert_eq!(block.text_content(), Some(""));
+    }
+
+    #[test]
+    fn test_content_block_tool_call_empty_fields() {
+        let block = ContentBlock::ToolCall {
+            id: String::new(),
+            name: String::new(),
+            args: serde_json::Value::Null,
+        };
+        assert!(block.is_tool_call());
+        assert!(block.text_content().is_none());
+    }
+
+    #[test]
+    fn test_content_block_thinking_empty() {
+        let block = ContentBlock::Thinking { text: String::new() };
+        assert!(block.is_thinking());
+        assert_eq!(block.text_content(), Some(""));
+    }
+
+    #[test]
+    fn test_message_with_name() {
+        let mut msg = Message::assistant("result");
+        msg.name = Some("get_weather".to_string());
+        assert_eq!(msg.name.as_deref(), Some("get_weather"));
+    }
+
+    #[test]
+    fn test_message_all_optional_fields() {
+        let msg = Message {
+            role: Role::Assistant,
+            content: "calling tools".to_string(),
+            tool_calls: Some(vec![ToolCall {
+                id: "call_1".to_string(),
+                name: "search".to_string(),
+                args: serde_json::json!({"q": "test"}),
+            }]),
+            tool_call_id: Some("call_1".to_string()),
+            name: Some("search_tool".to_string()),
+        };
+        assert!(msg.tool_calls.is_some());
+        assert_eq!(msg.tool_call_id.as_deref(), Some("call_1"));
+        assert_eq!(msg.name.as_deref(), Some("search_tool"));
+    }
+
+    #[test]
+    fn test_chat_response_mixed_content() {
+        let resp = ChatResponse {
+            content: vec![
+                ContentBlock::Thinking {
+                    text: "let me think".to_string(),
+                },
+                ContentBlock::Text {
+                    text: "Here is the answer".to_string(),
+                },
+                ContentBlock::ToolCall {
+                    id: "call_1".to_string(),
+                    name: "read_file".to_string(),
+                    args: serde_json::json!({"path": "test.txt"}),
+                },
+            ],
+            usage: TokenUsage::default(),
+            stop_reason: StopReason::ToolUse,
+            model: "deepseek-reasoner".to_string(),
+        };
+        assert!(resp.has_tool_calls());
+        assert_eq!(resp.text_content(), "let me thinkHere is the answer");
+        let calls = resp.get_tool_calls();
+        assert_eq!(calls.len(), 1);
+    }
+
+    #[test]
+    fn test_token_usage_very_large_values() {
+        let usage = TokenUsage {
+            input_tokens: 1_000_000_000,
+            output_tokens: 2_000_000_000,
+            cache_read_tokens: 500_000_000,
+            cache_creation_tokens: 100_000_000,
+        };
+        assert_eq!(usage.total(), 3_000_000_000);
+    }
+
+    #[test]
+    fn test_stop_reason_stop_sequence() {
+        assert_eq!(StopReason::StopSequence.to_string(), "stop_sequence");
+    }
+
+    #[test]
+    fn test_stop_reason_serialization() {
+        let json = serde_json::to_string(&StopReason::EndTurn).unwrap();
+        assert_eq!(json, "\"end_turn\"");
+        let deserialized: StopReason = serde_json::from_str("\"max_tokens\"").unwrap();
+        assert_eq!(deserialized, StopReason::MaxTokens);
+    }
+
+    #[test]
+    fn test_role_variants() {
+        assert_eq!(format!("{:?}", Role::System), "System");
+        assert_eq!(format!("{:?}", Role::User), "User");
+        assert_eq!(format!("{:?}", Role::Assistant), "Assistant");
+        assert_eq!(format!("{:?}", Role::Tool), "Tool");
+    }
+
+    #[test]
+    fn test_role_serialization() {
+        let json = serde_json::to_string(&Role::Assistant).unwrap();
+        assert_eq!(json, "\"assistant\"");
+        let deserialized: Role = serde_json::from_str("\"tool\"").unwrap();
+        assert_eq!(deserialized, Role::Tool);
+    }
+
+    #[test]
+    fn test_tool_definition_creation() {
+        let def = ToolDefinition {
+            name: "read_file".to_string(),
+            description: "Read a file".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"}
+                }
+            }),
+        };
+        assert_eq!(def.name, "read_file");
+        assert!(def.parameters["properties"]["path"]["type"].as_str() == Some("string"));
+    }
+
+    #[test]
+    fn test_message_content_empty_string() {
+        let msg = Message::user("");
+        assert_eq!(msg.content, "");
+    }
+
+    #[test]
+    fn test_chat_request_with_tools() {
+        let req = ChatRequest {
+            model: "test".to_string(),
+            messages: vec![],
+            tools: Some(vec![ToolDefinition {
+                name: "tool1".to_string(),
+                description: "desc".to_string(),
+                parameters: serde_json::json!({}),
+            }]),
+            system: Some("system prompt".to_string()),
+            max_tokens: None,
+            temperature: None,
+            stream: false,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("tool1"));
+        assert!(json.contains("system prompt"));
     }
 }

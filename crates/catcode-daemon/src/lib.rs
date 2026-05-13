@@ -13,19 +13,33 @@
 //! - **SubAgentSpawner** — Concurrent sub-agent spawning
 //! - **CheckpointManager** — Session state persistence to disk
 
+/// The `agent_loop` module.
 pub mod agent_loop;
+/// The `benchmark` module.
 pub mod benchmark;
+/// The `lsp_diagnostics` module.
 pub mod lsp_diagnostics;
+/// The `checkpoint` module.
 pub mod checkpoint;
+/// The `concurrent_session` module.
 pub mod concurrent_session;
+/// The `config` module.
 pub mod config;
+/// The `persistence` module.
 pub mod persistence;
+/// The `code_review` module.
 pub mod code_review;
+/// The `security_check` module.
 pub mod security_check;
+/// The `session` module.
 pub mod session;
+/// The `session_manager` module.
 pub mod session_manager;
+/// The `streaming_executor` module.
 pub mod streaming_executor;
+/// The `subagent` module.
 pub mod subagent;
+/// The `swe_bench` module.
 pub mod swe_bench;
 
 pub use agent_loop::{AgentLoop, AgentLoopError, AgentLoopResult};

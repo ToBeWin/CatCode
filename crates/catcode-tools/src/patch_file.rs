@@ -5,6 +5,7 @@ use tokio::fs;
 
 use crate::read_file::resolve_path;
 
+/// [`PatchFileTool`]
 pub struct PatchFileTool;
 
 #[async_trait]

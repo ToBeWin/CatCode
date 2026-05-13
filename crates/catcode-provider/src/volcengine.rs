@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 // === Volcengine model list ===
 
+/// Built-in Volcengine model identifiers for reference.
 pub const VOLCENGINE_MODELS: &[(&str, &str, f64, f64, u64, ModelTier)] = &[
     ("doubao-1.5-pro-256k", "Doubao 1.5 Pro 256K", 0.8, 0.8, 256_000, ModelTier::Powerful),
     ("doubao-1.5-pro-32k", "Doubao 1.5 Pro 32K", 0.35, 0.35, 32_000, ModelTier::Powerful),
@@ -243,6 +244,7 @@ fn convert_response(resp: VolcengineResponse, model: &str) -> Result<ChatRespons
 
 // === Volcengine Provider ===
 
+/// Volcengine (ByteDance) LLM provider.
 pub struct VolcengineProvider {
     api_key: String,
     base_url: String,
@@ -250,6 +252,7 @@ pub struct VolcengineProvider {
 }
 
 impl VolcengineProvider {
+/// Create a new Volcengine provider.
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,
@@ -263,6 +266,7 @@ impl VolcengineProvider {
     }
 }
 
+/// [`VolcengineTokenCounter`]
 pub struct VolcengineTokenCounter;
 
 impl TokenCounter for VolcengineTokenCounter {

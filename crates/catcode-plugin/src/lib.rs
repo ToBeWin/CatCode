@@ -11,9 +11,13 @@
 //! - **MCP**: Model Context Protocol client for connecting to external MCP servers
 //!   that provide tools and resources.
 
+/// The `mcp` module.
 pub mod mcp;
+/// The `plugin` module.
 pub mod plugin;
+/// The `skill` module.
 pub mod skill;
+/// The `wasm_sandbox` module.
 pub mod wasm_sandbox;
 
 use std::path::Path;
@@ -27,6 +31,7 @@ pub struct ExtensionManager {
 }
 
 impl ExtensionManager {
+/// Create an empty extension manager.
     pub fn new() -> Self {
         Self {
             skills: skill::SkillRegistry::new(),

@@ -47,27 +47,35 @@ impl Default for WasmSandboxConfig {
 #[derive(Debug, thiserror::Error)]
 pub enum WasmSandboxError {
     #[error("Failed to load WASM module: {0}")]
+/// [`LoadError`].
     LoadError(String),
 
     #[error("WASM execution error: {0}")]
+/// [`ExecutionError`].
     ExecutionError(String),
 
     #[error("WASM memory limit exceeded: used {used} bytes, limit {limit} bytes")]
+/// [`MemoryLimitExceeded`].
     MemoryLimitExceeded { used: usize, limit: usize },
 
     #[error("WASM execution timeout after {0:?}")]
+/// [`ExecutionTimeout`].
     ExecutionTimeout(Duration),
 
     #[error("WASM fuel exhausted: used {used}, limit {limit}")]
+/// [`FuelExhausted`].
     FuelExhausted { used: u64, limit: u64 },
 
     #[error("Host function not allowed: {0}")]
+/// [`HostFunctionDenied`].
     HostFunctionDenied(String),
 
     #[error("WASM function not found: {0}")]
+/// [`FunctionNotFound`].
     FunctionNotFound(String),
 
     #[error("WASM sandbox error: {0}")]
+/// [`Other`].
     Other(String),
 }
 
@@ -108,6 +116,7 @@ pub struct WasmToolResult {
 }
 
 impl WasmToolResult {
+/// Create a successful WASM execution result.
     pub fn success(output: impl Into<String>) -> Self {
         Self {
             output: output.into(),
@@ -115,6 +124,7 @@ impl WasmToolResult {
         }
     }
 
+/// Create an error WASM execution result.
     pub fn error(output: impl Into<String>) -> Self {
         Self {
             output: output.into(),

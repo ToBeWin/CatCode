@@ -9,8 +9,11 @@
 //! - Input box with `/` command support (bottom)
 //! - Keyboard shortcuts for common operations
 
+/// The `app` module.
 pub mod app;
+/// The `event` module.
 pub mod event;
+/// The `ui` module.
 pub mod ui;
 
 pub use app::{AgentMode, App, InputMode};
