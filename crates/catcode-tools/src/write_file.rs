@@ -43,6 +43,14 @@ impl Tool for WriteFileTool {
         OperationLevel::Sensitive
     }
 
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
+
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
     async fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
         // Extract path
         let path_str = match args.get("path").and_then(|v| v.as_str()) {

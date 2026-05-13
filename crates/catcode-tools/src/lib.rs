@@ -29,7 +29,7 @@ pub mod write_file;
 
 mod registry;
 
-pub use bash::BashTool;
+pub use bash::{BashProgress, BashTool};
 pub use code_analysis::CodeAnalysisTool;
 pub use delete_file::DeleteFileTool;
 pub use git_commit::GitCommitTool;

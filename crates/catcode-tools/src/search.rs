@@ -69,6 +69,14 @@ impl Tool for SearchFilesTool {
         OperationLevel::Safe
     }
 
+    fn is_concurrency_safe(&self) -> bool {
+        true
+    }
+
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
         let pattern = match args.get("pattern").and_then(|v| v.as_str()) {
             Some(p) => p,

@@ -48,6 +48,14 @@ impl Tool for WebFetchTool {
         OperationLevel::Dangerous
     }
 
+    fn is_concurrency_safe(&self) -> bool {
+        true
+    }
+
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
         let url = match args.get("url").and_then(|v| v.as_str()) {
             Some(u) => u.trim(),

@@ -43,6 +43,14 @@ impl Tool for GitCommitTool {
         OperationLevel::Sensitive
     }
 
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
+
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
     async fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
         let message = match args.get("message").and_then(|v| v.as_str()) {
             Some(m) => m.trim(),

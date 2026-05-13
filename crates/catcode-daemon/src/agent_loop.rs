@@ -1,9 +1,7 @@
-use catcode_context::{ContextCompressor, ContextStack, TokenBudget};
-use catcode_core::middleware::AgentContext;
+use catcode_context::{ContextStack, TieredCompactor, TokenBudget};
 use catcode_core::provider::{Provider, ProviderContext};
 use catcode_core::{
     ChatRequest, Message, Role, StopReason, TokenUsage, ToolCall, ToolContext, ToolDefinition,
-    ToolResult,
 };
 use catcode_middleware::MiddlewareChain;
 use catcode_middleware::model_router::{estimate_complexity, ModelRouter, ProviderHealth, RoutingBudget};
@@ -11,8 +9,11 @@ use catcode_tools::ToolRegistry;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
+use crate::lsp_diagnostics::DiagnosticRegistry;
+use crate::streaming_executor::StreamingToolExecutor;
 use crate::subagent::{SubAgentConfig, SubAgentSpawner};
 
 /// Maximum number of agent turns before forcing stop.
@@ -58,7 +59,7 @@ pub struct AgentLoop {
     middleware: Arc<MiddlewareChain>,
     context: ContextStack,
     budget: TokenBudget,
-    compressor: ContextCompressor,
+    compressor: TieredCompactor,
     model_id: String,
     max_turns: u64,
     model_router: Option<ModelRouter>,
@@ -68,6 +69,7 @@ pub struct AgentLoop {
     model_routing_enabled: bool,
     failed_tools: HashMap<String, u32>,
     total_failures: u32,
+    lsp_registry: Option<Arc<Mutex<DiagnosticRegistry>>>,
 }
 
 impl AgentLoop {
@@ -85,7 +87,7 @@ impl AgentLoop {
             middleware,
             context,
             budget,
-            compressor: ContextCompressor::new(),
+            compressor: TieredCompactor::new(),
             model_id: model_id.into(),
             max_turns: MAX_TURNS,
             model_router: None,
@@ -95,6 +97,7 @@ impl AgentLoop {
             model_routing_enabled: true,
             failed_tools: HashMap::new(),
             total_failures: 0,
+            lsp_registry: None,
         }
     }
 
@@ -125,6 +128,11 @@ impl AgentLoop {
 
     pub fn with_model_routing(mut self, enabled: bool) -> Self {
         self.model_routing_enabled = enabled;
+        self
+    }
+
+    pub fn with_lsp(mut self, registry: Arc<Mutex<DiagnosticRegistry>>) -> Self {
+        self.lsp_registry = Some(registry);
         self
     }
 
@@ -194,7 +202,8 @@ impl AgentLoop {
 
             turns += 1;
 
-            self.compressor.compress(&mut self.context);
+            let tiers = self.compressor.compress_tiered(&mut self.context);
+            debug!("Compaction tiers applied: {:?}", tiers);
 
             let messages = self.context.build_messages();
             let system = messages
@@ -213,7 +222,7 @@ impl AgentLoop {
                 models_used.push(model.clone());
             }
 
-            let request = ChatRequest {
+            let mut request = ChatRequest {
                 model,
                 messages: non_system,
                 tools: if tool_defs.is_empty() {
@@ -226,6 +235,8 @@ impl AgentLoop {
                 temperature: None,
                 stream: false,
             };
+
+            self.attach_lsp_diagnostics(&mut request);
 
             let provider_ctx = ProviderContext {
                 session_id: None,
@@ -282,36 +293,22 @@ impl AgentLoop {
             self.context.add_assistant_message(&text);
             all_messages.push(assistant_msg);
 
-            let mut agent_ctx = AgentContext::new("agent-loop");
+            let tool_ctx = ToolContext {
+                session_id: None,
+                project_dir: Some(project_dir.to_path_buf()),
+                working_dir: Some(project_dir.to_path_buf()),
+                dry_run: false,
+            };
 
-            for tc in &tc_objects {
-                let call_id = tc.id.clone();
-                let tool_name = tc.name.clone();
-                let tools = self.tools.clone();
-                let tc_ref = tc.clone();
-                let tool_ctx = ToolContext {
-                    session_id: None,
-                    project_dir: Some(project_dir.to_path_buf()),
-                    working_dir: Some(project_dir.to_path_buf()),
-                    dry_run: false,
-                };
+            let executor = StreamingToolExecutor::new(self.tools.clone(), self.middleware.clone());
+            let results = executor.execute_batch(&tc_objects, &tool_ctx).await;
 
-                let tool_fn: catcode_middleware::chain::ToolFn = Arc::new(move |call| {
-                    let tools = tools.clone();
-                    let tool_ctx = tool_ctx.clone();
-                    let call = call.clone();
-                    Box::pin(async move {
-                        tools
-                            .dispatch(&call.name, call.args.clone(), &tool_ctx)
-                            .await
-                            .unwrap_or_else(|e| ToolResult::error(e.to_string()))
-                    })
-                });
-
-                let result = self
-                    .middleware
-                    .execute_tool(&mut agent_ctx, &tc_ref, tool_fn)
-                    .await;
+            for (call_id, result) in results {
+                let tool_name = tc_objects
+                    .iter()
+                    .find(|tc| tc.id == call_id)
+                    .map(|tc| tc.name.clone())
+                    .unwrap_or_default();
 
                 debug!(
                     tool = %tool_name,
@@ -572,6 +569,29 @@ impl AgentLoop {
                 }
             })
             .collect()
+    }
+
+    /// Attach LSP diagnostics to the ChatRequest as additional system context.
+    ///
+    /// Reads from the diagnostic registry and appends any pending diagnostics
+    /// to the system prompt so the LLM can see compiler feedback.
+    fn attach_lsp_diagnostics(&self, request: &mut ChatRequest) {
+        let Some(ref registry) = self.lsp_registry else { return };
+        let registry = registry.blocking_lock();
+        if let Some(attachment) = registry.build_attachment(&[]) {
+            let msg = format!(
+                "Current LSP diagnostics:\n{}\n\nDetails:\n{}",
+                attachment.summary,
+                attachment.details.join("\n")
+            );
+            request.system = Some(match request.system.take() {
+                Some(mut s) => {
+                    s.push_str(&format!("\n\n{}", msg));
+                    s
+                }
+                None => msg,
+            });
+        }
     }
 
     /// Build tool definitions from the registry for the LLM request.

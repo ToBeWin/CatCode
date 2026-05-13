@@ -42,6 +42,14 @@ impl Tool for GitDiffTool {
         OperationLevel::Safe
     }
 
+    fn is_concurrency_safe(&self) -> bool {
+        true
+    }
+
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
         let repo_path = if let Some(ref wd) = ctx.working_dir {
             wd.clone()

@@ -37,6 +37,14 @@ impl Tool for GitStatusTool {
         OperationLevel::Safe
     }
 
+    fn is_concurrency_safe(&self) -> bool {
+        true
+    }
+
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
         let repo_path = resolve_repo_path(&args, ctx);
 

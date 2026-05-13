@@ -27,6 +27,8 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 sqlx = { workspace = true }
 regex = { workspace = true }
+lru = { workspace = true }
 
 [dev-dependencies]
+async-trait = { workspace = true }
 tempfile = "3"

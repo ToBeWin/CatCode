@@ -1,6 +1,33 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+// === ToolProgress ===
+
+/// Progress event during streaming tool execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ToolProgress {
+    /// Tool started.
+    Started {
+        tool_name: String,
+        tool_args: serde_json::Value,
+    },
+    /// Partial output during execution.
+    Progress {
+        tool_name: String,
+        output: String,
+    },
+    /// Tool completed.
+    Completed {
+        tool_name: String,
+        result: ToolResult,
+    },
+    /// Tool failed.
+    Failed {
+        tool_name: String,
+        error: String,
+    },
+}
+
 // === OperationLevel ===
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +87,19 @@ pub trait Tool: Send + Sync {
     fn description(&self) -> &str;
     fn parameters_schema(&self) -> serde_json::Value;
     fn operation_level(&self) -> OperationLevel;
+
+    /// Whether this tool can run concurrently with other safe tools.
+    /// Returns true for read-only tools (read_file, grep, glob, etc.)
+    /// Returns false for write tools that modify state (write_file, edit, bash)
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
+
+    /// Whether this tool is read-only (can batch with other reads).
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult;
 }
 

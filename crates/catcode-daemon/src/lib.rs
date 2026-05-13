@@ -15,6 +15,7 @@
 
 pub mod agent_loop;
 pub mod benchmark;
+pub mod lsp_diagnostics;
 pub mod checkpoint;
 pub mod concurrent_session;
 pub mod config;
@@ -23,6 +24,7 @@ pub mod code_review;
 pub mod security_check;
 pub mod session;
 pub mod session_manager;
+pub mod streaming_executor;
 pub mod subagent;
 pub mod swe_bench;
 

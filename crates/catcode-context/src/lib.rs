@@ -12,7 +12,8 @@
 //!
 //! - **ContextStack** — layered context model (permanent, session, working)
 //! - **TokenBudget** — token usage tracking and limit enforcement
-//! - **ContextCompressor** — context compression pipeline
+//! - **ContextCompressor** — basic context compression pipeline
+//! - **TieredCompactor** — 4-level tiered compaction (Micro, Snip, Collapse, Full)
 //!
 //! And two memory subsystems:
 //!
@@ -27,7 +28,7 @@ pub mod session_memory;
 pub mod token_budget;
 
 pub use archive_memory::ArchiveMemory;
-pub use compressor::ContextCompressor;
+pub use compressor::{CompactConfig, CompactTier, ContextCompressor, TieredCompactor};
 pub use context_stack::{ContextStack, PermanentLayer, SessionLayer, WorkingLayer};
 pub use prompt_cache::{CachePlan, CacheStats, PromptCacheOptimizer};
 pub use session_memory::SessionMemory;
