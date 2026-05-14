@@ -219,7 +219,7 @@ fn render_cat_overlay(f: &mut Frame, app: &App, area: Rect) {
 
     let cat_lines: Vec<&str> = app.cat_art().lines().collect();
     let cat_height = cat_lines.len() as u16;
-    let cat_width = 10u16;
+    let cat_width = 12u16;
 
     if area.width < cat_width + 2 || area.height < cat_height + 1 {
         return;

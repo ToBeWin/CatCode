@@ -90,25 +90,30 @@ impl CatState {
 }
 
 const CAT_IDLE: &str = "\
-   .---.
-  (=^‥^=)
-   z z Z ";
+  |`.    .'|
+  |  \\_/  |
+  | (^‥^) |
+  |> zZ   |";
 const CAT_THINKING: &str = "\
-   .---.
-  (=^..^=)
-   ...  ";
+  |`.    .'|
+  |  \\_/  |
+  | (^..^) |
+  |> ...  |";
 const CAT_EXECUTING: &str = "\
-   .---.
-  (=｀^´=)
-    ==>  ";
+  |`.    .'|
+  |  \\_/  |
+  | (｀^´) |
+  |> ==>  |";
 const CAT_ERROR: &str = "\
-   .---.
-  (=；ェ；=)
-   !! !!";
+  |`.    .'|
+  |  \\_/  |
+  | (；ェ；)|
+  |> !! ! |";
 const CAT_DONE: &str = "\
-   .---.
-  (=^‥^=)
-    ✓   ";
+  |`.    .'|
+  |  \\_/  |
+  | (^‥^) |
+  |>  ✓  |";
 
 /// Agent execution mode.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1732,11 +1737,11 @@ mod tests {
 
     #[test]
     fn test_cat_state_ascii_art() {
-        assert!(CatState::Idle.ascii_art().contains("(=^‥^=)"));
-        assert!(CatState::Thinking.ascii_art().contains("(=^..^=)"));
-        assert!(CatState::Executing.ascii_art().contains("(=｀^´=)"));
-        assert!(CatState::Error.ascii_art().contains("(=；ェ；=)"));
-        assert!(CatState::Done.ascii_art().contains("(=^‥^=)"));
+        assert!(CatState::Idle.ascii_art().contains("^‥^"));
+        assert!(CatState::Thinking.ascii_art().contains("^..^"));
+        assert!(CatState::Executing.ascii_art().contains("｀^´"));
+        assert!(CatState::Error.ascii_art().contains("；ェ；"));
+        assert!(CatState::Done.ascii_art().contains("^‥^"));
     }
 
     #[test]
@@ -1762,10 +1767,10 @@ mod tests {
         let mut app = make_app();
         app.cat_enabled = true;
         app.set_cat_state(CatState::Idle);
-        assert!(app.cat_art().contains(".---."));
+        assert!(app.cat_art().contains("\\_/"));
 
         app.set_cat_state(CatState::Error);
-        assert!(app.cat_art().contains(".---."));
+        assert!(app.cat_art().contains("\\_/"));
     }
 
     #[test]
