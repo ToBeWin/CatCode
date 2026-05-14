@@ -1,11 +1,23 @@
-use crate::app::{AgentMode, App, CatState, GoalStatus, InputMode, MessageRole};
+use crate::app::{AgentMode, App, CatState, InputMode, MessageRole};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
+
+const HEADER_BG: Color = Color::Rgb(30, 30, 50);
+const ACCENT: Color = Color::Rgb(100, 180, 255);
+const SUCCESS: Color = Color::Rgb(80, 200, 120);
+const WARN: Color = Color::Rgb(255, 200, 50);
+const ERROR: Color = Color::Rgb(255, 80, 80);
+const TEXT: Color = Color::Rgb(220, 220, 220);
+const DIM: Color = Color::Rgb(120, 120, 120);
+const USER_MSG: Color = Color::Rgb(100, 180, 255);
+const ASSISTANT_MSG: Color = Color::Rgb(80, 200, 120);
+const SYSTEM_MSG: Color = Color::Rgb(255, 200, 50);
+const TOOL_MSG: Color = Color::Rgb(180, 140, 200);
 
 /// All available commands for the command palette.
 const COMMANDS: &[(&str, &str)] = &[
@@ -48,9 +60,16 @@ pub fn render(f: &mut Frame, app: &App) {
     render_input(f, app, chunks[2]);
     render_status_bar(f, app, chunks[3]);
 
-    // Command suggestions overlay (when in command mode)
     if app.input_mode == InputMode::Command {
         render_command_suggestions(f, app);
+    }
+}
+
+fn border_style(active: bool) -> Style {
+    if active {
+        Style::default().fg(ACCENT)
+    } else {
+        Style::default().fg(DIM)
     }
 }
 
@@ -70,12 +89,9 @@ fn render_command_suggestions(f: &mut Frame, app: &App) {
         return;
     }
 
-    // Calculate popup size
-    let popup_height = (suggestions.len() as u16 + 2).min(12); // +2 for borders
+    let popup_height = (suggestions.len() as u16 + 2).min(12);
     let popup_width = 40u16.min(f.area().width.saturating_sub(4));
-
-    // Position: centered horizontally, above input area
-    let input_area_y = f.area().height.saturating_sub(4); // input starts here
+    let input_area_y = f.area().height.saturating_sub(4);
     let popup_y = input_area_y.saturating_sub(popup_height + 1);
     let popup_x = (f.area().width.saturating_sub(popup_width)) / 2;
 
@@ -86,7 +102,6 @@ fn render_command_suggestions(f: &mut Frame, app: &App) {
         height: popup_height,
     };
 
-    // Clear the area behind the popup
     f.render_widget(Clear, area);
 
     let items: Vec<ListItem> = suggestions
@@ -96,14 +111,9 @@ fn render_command_suggestions(f: &mut Frame, app: &App) {
             ListItem::new(Line::from(vec![
                 Span::styled(
                     format!("/{:<14}", cmd_name),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    format!(" {}", desc),
-                    Style::default().fg(Color::Gray),
-                ),
+                Span::styled(format!(" {}", desc), Style::default().fg(DIM)),
             ]))
         })
         .collect();
@@ -112,8 +122,8 @@ fn render_command_suggestions(f: &mut Frame, app: &App) {
         Block::default()
             .title(" Commands ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow))
-            .style(Style::default().bg(Color::Black)),
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(WARN)),
     );
 
     f.render_widget(list, area);
@@ -132,71 +142,55 @@ fn render_top_bar(f: &mut Frame, app: &App, area: Rect) {
         .unwrap_or("-");
 
     let tokens = format!(
-        "In:{} Out:{} Cache:{} ${:.4}",
+        " {}in {}out ${:.4}",
         app.token_display.input_tokens,
         app.token_display.output_tokens,
-        app.token_display.cache_tokens,
         app.token_display.cost_usd,
     );
 
     let mode_label = app.agent_mode.label();
     let mode_color = match app.agent_mode {
         AgentMode::Plan => Color::Magenta,
-        AgentMode::Act => Color::Green,
-        AgentMode::Auto => Color::Yellow,
+        AgentMode::Act => SUCCESS,
+        AgentMode::Auto => WARN,
     };
 
     let mut spans = vec![
+        Span::styled(" ◆ ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
         Span::styled(
-            " CatCode ".to_string(),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!(" [{}]", mode_label),
+            format!(" {} ", mode_label),
             Style::default()
                 .fg(mode_color)
+                .bg(HEADER_BG)
                 .add_modifier(Modifier::BOLD),
         ),
+        Span::styled(
+            format!(" {} ", session_name),
+            Style::default().fg(TEXT).bg(HEADER_BG),
+        ),
+        Span::styled(
+            format!(" {} ", model),
+            Style::default().fg(WARN).bg(HEADER_BG),
+        ),
+        Span::styled(tokens, Style::default().fg(SUCCESS).bg(HEADER_BG)),
     ];
 
-    // Show goal indicator if there's an active goal
-    if let Some(goal) = &app.goal {
-        let (goal_icon, goal_color) = match goal.status {
-            GoalStatus::Active => ("GOAL", Color::Green),
-            GoalStatus::Paused => ("GOAL⏸", Color::Yellow),
-            GoalStatus::BudgetLimited => ("GOAL$", Color::Red),
-            GoalStatus::Complete => ("GOAL✓", Color::Blue),
-        };
-        spans.push(Span::styled(
-            format!(" [{}]", goal_icon),
-            Style::default().fg(goal_color).add_modifier(Modifier::BOLD),
-        ));
-    }
-
-    spans.push(Span::raw(format!(" [{}]", session_name)));
-    spans.push(Span::styled(format!(" [{}]", model), Style::default().fg(Color::Yellow)));
-    spans.push(Span::styled(format!(" {}", tokens), Style::default().fg(Color::Green)));
-
-    // Cat mascot
     if app.cat_enabled {
         let cat_color = match app.cat_state {
-            CatState::Idle => Color::DarkGray,
-            CatState::Thinking => Color::Yellow,
-            CatState::Executing => Color::Green,
-            CatState::Error => Color::Red,
-            CatState::Done => Color::Cyan,
+            CatState::Idle => DIM,
+            CatState::Thinking => WARN,
+            CatState::Executing => SUCCESS,
+            CatState::Error => ERROR,
+            CatState::Done => ACCENT,
         };
         spans.push(Span::styled(
             format!(" {}", app.cat_art()),
-            Style::default().fg(cat_color),
+            Style::default().fg(cat_color).bg(HEADER_BG),
         ));
     }
 
     let line = Line::from(spans);
-
-    let paragraph = Paragraph::new(line).style(Style::default().bg(Color::DarkGray));
+    let paragraph = Paragraph::new(line).style(Style::default().bg(HEADER_BG));
     f.render_widget(paragraph, area);
 }
 
@@ -206,9 +200,9 @@ fn render_main_area(f: &mut Frame, app: &App, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(20),  // Sessions panel
-                Constraint::Percentage(30), // Thinking panel
-                Constraint::Min(40),     // Messages
+                Constraint::Length(20),
+                Constraint::Percentage(30),
+                Constraint::Min(40),
             ])
             .split(area);
 
@@ -219,8 +213,8 @@ fn render_main_area(f: &mut Frame, app: &App, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(20), // Sessions panel
-                Constraint::Min(40),    // Messages
+                Constraint::Length(20),
+                Constraint::Min(40),
             ])
             .split(area);
 
@@ -238,21 +232,20 @@ fn render_thinking_panel(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let paragraph = Paragraph::new(text)
-        .style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::ITALIC),
-        )
+        .style(Style::default().fg(WARN).italic())
         .block(
             Block::default()
                 .title(" Thinking... ")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Yellow)),
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(WARN)),
         )
         .wrap(Wrap { trim: false });
 
     f.render_widget(paragraph, area);
 }
+
+use catcode_daemon::SessionState;
 
 /// Render the sessions list panel.
 fn render_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
@@ -264,10 +257,10 @@ fn render_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
         .enumerate()
         .map(|(i, s)| {
             let indicator = match &s.state {
-                SessionState::Running => Span::styled("●", Style::default().fg(Color::Green)),
-                SessionState::Paused => Span::styled("◐", Style::default().fg(Color::Yellow)),
+                SessionState::Running => Span::styled("●", Style::default().fg(SUCCESS)),
+                SessionState::Paused => Span::styled("◐", Style::default().fg(WARN)),
                 SessionState::Completed => Span::styled("✓", Style::default().fg(Color::Blue)),
-                SessionState::Failed(_) => Span::styled("✗", Style::default().fg(Color::Red)),
+                SessionState::Failed(_) => Span::styled("✗", Style::default().fg(ERROR)),
             };
 
             let is_active = app.active_session.as_ref() == Some(&s.id);
@@ -276,10 +269,9 @@ fn render_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(DIM)
             };
 
-            let num_style = Style::default().fg(Color::DarkGray);
             let num = if i < 9 {
                 format!("{} ", i + 1)
             } else {
@@ -287,7 +279,7 @@ fn render_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
             };
 
             ListItem::new(Line::from(vec![
-                Span::styled(num, num_style),
+                Span::styled(num, Style::default().fg(DIM)),
                 indicator,
                 Span::raw(" "),
                 Span::styled(&s.name, name_style),
@@ -300,82 +292,90 @@ fn render_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
         Block::default()
             .title(title)
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray)),
+            .border_type(BorderType::Rounded)
+            .border_style(border_style(true)),
     );
 
     f.render_widget(list, area);
 }
 
-use catcode_daemon::SessionState;
-
 /// Render the messages area.
 fn render_messages(f: &mut Frame, app: &App, area: Rect) {
-    let inner_height = area.height.saturating_sub(2) as usize; // subtract borders
+    let inner_height = area.height.saturating_sub(2) as usize;
 
     let lines: Vec<Line> = app
         .messages
         .iter()
         .flat_map(|msg| {
-            let (prefix, style) = match msg.role {
-                MessageRole::User => (
-                    "You: ",
+            let prefix_style: Style = match msg.role {
+                MessageRole::User => Style::default().fg(USER_MSG).add_modifier(Modifier::BOLD),
+                MessageRole::Assistant => {
                     Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                MessageRole::Assistant => (
-                    "Agent: ",
+                        .fg(ASSISTANT_MSG)
+                        .add_modifier(Modifier::BOLD)
+                }
+                MessageRole::System => {
                     Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                MessageRole::System => (
-                    "System: ",
+                        .fg(SYSTEM_MSG)
+                        .add_modifier(Modifier::ITALIC)
+                }
+                MessageRole::Tool => {
                     Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::ITALIC),
-                ),
-                MessageRole::Tool => (
-                    "Tool: ",
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::ITALIC),
-                ),
+                        .fg(TOOL_MSG)
+                        .add_modifier(Modifier::ITALIC)
+                }
+            };
+
+            let role_color = match msg.role {
+                MessageRole::User => USER_MSG,
+                MessageRole::Assistant => ASSISTANT_MSG,
+                MessageRole::System => SYSTEM_MSG,
+                MessageRole::Tool => TOOL_MSG,
+            };
+            let prefix = match msg.role {
+                MessageRole::User => "You",
+                MessageRole::Assistant => "Agent",
+                MessageRole::System => "System",
+                MessageRole::Tool => "Tool",
             };
 
             let mut result = Vec::new();
 
-            // Show thinking content if present (before the message)
             if let Some(ref thinking) = msg.thinking {
                 for line in thinking.lines() {
                     result.push(Line::from(Span::styled(
                         format!("  {}", line),
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::ITALIC),
+                        Style::default().fg(WARN).italic(),
                     )));
                 }
                 result.push(Line::from(Span::raw("")));
             }
 
-            // Split content into lines
             let content_lines: Vec<&str> = msg.content.lines().collect();
             for (i, line) in content_lines.iter().enumerate() {
                 if i == 0 {
                     result.push(Line::from(vec![
-                        Span::styled(prefix, style),
-                        Span::raw(*line),
+                        Span::styled(
+                            format!(" {} ", prefix),
+                            Style::default()
+                                .fg(Color::Black)
+                                .bg(role_color)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(format!(" {}", line), prefix_style),
                     ]));
                 } else {
-                    result.push(Line::from(Span::raw(format!("  {}", line))));
+                    result.push(Line::from(Span::styled(
+                        format!("   {}", line),
+                        Style::default().fg(TEXT),
+                    )));
                 }
             }
-            result.push(Line::from(Span::raw(""))); // blank line between messages
+            result.push(Line::from(Span::raw("")));
             result
         })
         .collect();
 
-    // Calculate scroll offset
     let total_lines = lines.len();
     let scroll = if app.scroll_offset == usize::MAX {
         total_lines.saturating_sub(inner_height)
@@ -384,14 +384,21 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
             .min(total_lines.saturating_sub(inner_height))
     };
 
+    let active_session = app.active_session();
+    let chat_title = match active_session {
+        Some(s) => format!(" {} ", s.name),
+        None => " Chat ".to_string(),
+    };
+
     let paragraph = Paragraph::new(lines)
         .scroll((scroll as u16, 0))
         .wrap(Wrap { trim: false })
         .block(
             Block::default()
-                .title(" Chat ")
+                .title(chat_title)
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_type(BorderType::Rounded)
+                .border_style(border_style(true)),
         );
 
     f.render_widget(paragraph, area);
@@ -404,49 +411,59 @@ fn render_input(f: &mut Frame, app: &App, area: Rect) {
         AgentMode::Act => "Act",
         AgentMode::Auto => "Auto",
     };
-    let (title, style) = match app.input_mode {
-        InputMode::Normal => (
-            format!(" Input [{}] ", mode_tag),
-            Style::default().fg(Color::White),
-        ),
-        InputMode::Command => (" Command ".to_string(), Style::default().fg(Color::Yellow)),
+
+    let is_disabled = app.agent_busy;
+    let (title, border_color) = match app.input_mode {
+        InputMode::Normal => {
+            if is_disabled {
+                (
+                    format!(" Input [{}] (waiting...) ", mode_tag),
+                    DIM,
+                )
+            } else {
+                (
+                    format!(" Input [{}] ", mode_tag),
+                    ACCENT,
+                )
+            }
+        }
+        InputMode::Command => (" Command ".to_string(), WARN),
     };
+
     let command_text = format!("/{}", app.command_input);
     let input_text = match app.input_mode {
         InputMode::Normal => app.input.as_str(),
         InputMode::Command => command_text.as_str(),
     };
 
-    // Calculate cursor position for the inner area (account for borders)
     let inner_x = area.x + 1;
     let inner_y = area.y + 1;
     let cursor_byte = match app.input_mode {
         InputMode::Normal => app.input_cursor,
         InputMode::Command => command_text.len(),
     };
-    // Convert byte offset to char offset for display
     let cursor_char = match app.input_mode {
         InputMode::Normal => app.input[..cursor_byte].chars().count(),
         InputMode::Command => command_text[..cursor_byte].chars().count(),
     };
 
-    let input = Paragraph::new(input_text).style(style).block(
-        Block::default()
-            .title(title)
-            .borders(Borders::ALL)
-            .border_style(
-                Style::default().fg(if app.input_mode == InputMode::Command {
-                    Color::Yellow
-                } else {
-                    Color::DarkGray
-                }),
-            ),
-    );
+    let input = Paragraph::new(input_text)
+        .style(if is_disabled {
+            Style::default().fg(DIM)
+        } else {
+            Style::default().fg(TEXT)
+        })
+        .block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(border_color)),
+        );
 
     f.render_widget(input, area);
 
-    // Show cursor
-    if area.width > 2 && area.height > 2 {
+    if area.width > 2 && area.height > 2 && !app.agent_busy {
         let max_x = area.width.saturating_sub(2) as usize;
         let cursor_x = (inner_x as usize + cursor_char).min(inner_x as usize + max_x);
         f.set_cursor_position((cursor_x as u16, inner_y));
@@ -459,41 +476,48 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let help = match app.input_mode {
         InputMode::Normal => {
             let mode_hint = match app.agent_mode {
-                AgentMode::Plan => "Ctrl+P:switch to act",
-                AgentMode::Act => "Ctrl+P:plan mode",
-                AgentMode::Auto => "Ctrl+P:plan mode",
+                AgentMode::Plan => "Ctrl+P:act",
+                AgentMode::Act => "Ctrl+P:plan",
+                AgentMode::Auto => "Ctrl+P:plan",
             };
+            let base = format!(" Enter:send | /:cmd | {}", mode_hint);
             if session_count > 1 {
-                format!(" Enter:send | /:cmd | {} | Ctrl+1-9:switch | Ctrl+N:new", mode_hint)
+                format!("{} | Ctrl+1-9:switch | Ctrl+N:new", base)
             } else {
-                format!(" Enter:send | /:cmd | {} | Ctrl+N:new", mode_hint)
+                format!("{} | Ctrl+N:new", base)
             }
         }
         InputMode::Command => " Enter:exec | Esc:cancel | Tab:autocomplete".to_string(),
     };
 
-    // Show spinner when agent is busy
     let status_text = if app.agent_busy {
-        let spinner_chars = ['|', '/', '-', '\\'];
+        let spinner_chars = ['⟳', '⟳', '⟳', '⟳'];
         let spinner = spinner_chars[app.spinner_frame as usize % 4];
         if app.busy_message.is_empty() {
-            format!(" {} {} │ {}", spinner, "Processing...", help)
+            format!(" {} Processing...    {}", spinner, help)
         } else {
-            format!(" {} {} │ {}", spinner, app.busy_message, help)
+            format!(" {} {}    {}", spinner, app.busy_message, help)
         }
     } else if app.status.is_empty() {
         help
     } else {
-        format!("{} │ {}", app.status, help)
+        format!(" {}    {}", app.status, help)
     };
 
-    let spinner_style = if app.agent_busy {
-        Style::default().fg(Color::Cyan).bg(Color::Black)
+    let bg = if app.agent_busy {
+        Color::Rgb(20, 40, 60)
     } else {
-        Style::default().fg(Color::DarkGray).bg(Color::Black)
+        Color::Black
     };
 
-    let paragraph = Paragraph::new(status_text).style(spinner_style);
+    let fg_color = if app.agent_busy {
+        ACCENT
+    } else {
+        DIM
+    };
+
+    let paragraph = Paragraph::new(status_text)
+        .style(Style::default().fg(fg_color).bg(bg));
 
     f.render_widget(paragraph, area);
 }
@@ -505,16 +529,10 @@ mod tests {
 
     #[test]
     fn test_render_doesnt_panic() {
-        // Basic smoke test — render with a default app and verify no panics
         let app = App::new(PathBuf::from("/tmp"));
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
-
-        terminal
-            .draw(|f| {
-                render(f, &app);
-            })
-            .unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
     }
 
     #[test]
@@ -524,15 +542,9 @@ mod tests {
         app.create_session("test-2");
         app.add_message(MessageRole::User, "hello");
         app.add_message(MessageRole::Assistant, "hi there");
-
         let backend = ratatui::backend::TestBackend::new(120, 40);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
-
-        terminal
-            .draw(|f| {
-                render(f, &app);
-            })
-            .unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
     }
 
     #[test]
@@ -540,20 +552,13 @@ mod tests {
         let mut app = App::new(PathBuf::from("/tmp"));
         app.create_session("test");
         app.enter_command_mode();
-        app.command_input = "he".to_string(); // should match "help"
-
+        app.command_input = "he".to_string();
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
-
-        terminal
-            .draw(|f| {
-                render(f, &app);
-            })
-            .unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
     }
 
     #[test]
-    #[allow(clippy::const_is_empty)]
     fn test_command_suggestions_filtering() {
         assert!(!COMMANDS.is_empty());
         assert!(COMMANDS.iter().any(|(cmd, _)| cmd.starts_with("new")));
