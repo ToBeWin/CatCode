@@ -413,11 +413,10 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let total_lines = lines.len();
-    let scroll = if app.scroll_offset == usize::MAX {
+    let scroll = if app.auto_scroll {
         total_lines.saturating_sub(inner_height)
     } else {
-        app.scroll_offset
-            .min(total_lines.saturating_sub(inner_height))
+        app.scroll_offset.min(total_lines.saturating_sub(inner_height))
     };
 
     let active_session = app.active_session();

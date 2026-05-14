@@ -212,8 +212,10 @@ pub struct App {
     pub should_quit: bool,
     /// Project directory.
     pub project_dir: PathBuf,
-    /// Scroll offset for the messages view.
+    /// Scroll offset for the messages view. 0 = top, usize::MAX = bottom.
     pub scroll_offset: usize,
+    /// Whether to auto-scroll to bottom on new messages.
+    pub auto_scroll: bool,
     /// Token usage display.
     pub token_display: TokenDisplay,
     /// Status message for the bottom bar.
@@ -272,6 +274,7 @@ impl App {
             should_quit: false,
             project_dir,
             scroll_offset: 0,
+            auto_scroll: true,
             token_display: TokenDisplay::default(),
             status: String::new(),
             agent_mode: AgentMode::Act,
@@ -331,17 +334,18 @@ impl App {
 
     /// Scroll to the bottom of the messages.
     pub fn scroll_to_bottom(&mut self) {
-        // Will be adjusted by the UI based on viewport height
+        self.auto_scroll = true;
         self.scroll_offset = usize::MAX;
     }
 
     /// Scroll up by one page.
     pub fn scroll_up(&mut self, amount: usize) {
+        self.auto_scroll = false;
         self.scroll_offset = self.scroll_offset.saturating_sub(amount);
     }
 
-    /// Scroll down by one page.
     pub fn scroll_down(&mut self, amount: usize) {
+        self.auto_scroll = false;
         self.scroll_offset = self.scroll_offset.saturating_add(amount);
     }
 
