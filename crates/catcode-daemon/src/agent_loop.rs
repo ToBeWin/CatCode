@@ -13,6 +13,7 @@ use tokio::sync::Mutex;
 use futures::StreamExt;
 use tracing::{debug, info, warn};
 
+use crate::agent_events::{AgentEventSender, AgentStreamEvent};
 use crate::lsp_diagnostics::DiagnosticRegistry;
 use crate::streaming_executor::StreamingToolExecutor;
 use crate::subagent::{SubAgentConfig, SubAgentSpawner};
@@ -71,6 +72,7 @@ pub struct AgentLoop {
     failed_tools: HashMap<String, u32>,
     total_failures: u32,
     lsp_registry: Option<Arc<Mutex<DiagnosticRegistry>>>,
+    event_tx: Option<AgentEventSender>,
 }
 
 impl AgentLoop {
@@ -100,6 +102,7 @@ impl AgentLoop {
             failed_tools: HashMap::new(),
             total_failures: 0,
             lsp_registry: None,
+            event_tx: None,
         }
     }
 
@@ -143,6 +146,19 @@ impl AgentLoop {
     pub fn with_lsp(mut self, registry: Arc<Mutex<DiagnosticRegistry>>) -> Self {
         self.lsp_registry = Some(registry);
         self
+    }
+
+/// Attach an event sender for real-time progress updates to TUI/API.
+    pub fn with_event_tx(mut self, tx: AgentEventSender) -> Self {
+        self.event_tx = Some(tx);
+        self
+    }
+
+    /// Send a streaming event if a sender is attached.
+    fn emit(&self, event: AgentStreamEvent) {
+        if let Some(ref tx) = self.event_tx {
+            let _ = tx.send(event);
+        }
     }
 
     /// Run the agent loop with intelligence features (auto-plan + full smart loop).
@@ -275,6 +291,7 @@ impl AgentLoop {
             };
 
             debug!(turn = turns, "Calling provider");
+            self.emit(AgentStreamEvent::Status(format!("Calling LLM (turn {})...", turns)));
             let mut response_text = String::new();
             let mut thinking_text = String::new();
             let mut tool_calls: Vec<(String, String, serde_json::Value)> = Vec::new();
@@ -290,6 +307,11 @@ impl AgentLoop {
 
                         if let Some(text) = &chunk.content {
                             response_text.push_str(text);
+                            self.emit(AgentStreamEvent::TextDelta(text.clone()));
+                        }
+                        if let Some(thinking) = &chunk.thinking {
+                            thinking_text.push_str(thinking);
+                            self.emit(AgentStreamEvent::Thinking(thinking.clone()));
                         }
                         if let Some(thinking) = &chunk.thinking {
                             thinking_text.push_str(thinking);
@@ -339,6 +361,12 @@ impl AgentLoop {
             total_usage = total_usage + final_usage.clone();
             self.budget.record_usage(&final_usage);
 
+            self.emit(AgentStreamEvent::TokenUpdate {
+                input: final_usage.input_tokens,
+                output: final_usage.output_tokens,
+                cache: final_usage.cache_read_tokens,
+            });
+
             if self.budget.is_exhausted() {
                 warn!("Token budget exhausted");
                 return Err(AgentLoopError::BudgetExhausted);
@@ -351,6 +379,7 @@ impl AgentLoop {
                     self.context.add_assistant_message(&response_text);
                     all_messages.push(Message::assistant(&response_text));
                 }
+                self.emit(AgentStreamEvent::Completed);
                 return Ok(AgentLoopResult {
                     response: response_text,
                     total_usage,
@@ -384,6 +413,15 @@ impl AgentLoop {
                 dry_run: false,
             };
 
+            self.emit(AgentStreamEvent::Status("Executing tools...".to_string()));
+
+            for tc in &tc_objects {
+                self.emit(AgentStreamEvent::ToolCall {
+                    tool: tc.name.clone(),
+                    args: tc.args.to_string(),
+                });
+            }
+
             let executor = StreamingToolExecutor::new(self.tools.clone(), self.middleware.clone());
             let results = executor.execute_batch(&tc_objects, &tool_ctx).await;
 
@@ -393,6 +431,12 @@ impl AgentLoop {
                     .find(|tc| tc.id == *call_id)
                     .map(|tc| tc.name.clone())
                     .unwrap_or_default();
+
+                self.emit(AgentStreamEvent::ToolResult {
+                    tool: tool_name.clone(),
+                    output: result.output.chars().take(200).collect(),
+                    is_error: result.is_error,
+                });
 
                 debug!(
                     tool = %tool_name,

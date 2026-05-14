@@ -1,6 +1,7 @@
 use catcode_daemon::{
-    AgentRuntime, AgentRuntimeOptions, BenchmarkCase, BenchmarkReport, Session, SessionManager,
-    SessionState, default_benchmark_cases,
+    AgentEventSender, AgentRuntime, AgentRuntimeOptions, AgentStreamEvent, BenchmarkCase,
+    BenchmarkReport, Session, SessionManager, SessionState, default_system_prompt,
+    default_benchmark_cases,
 };
 use std::path::PathBuf;
 use std::time::Instant;
@@ -967,44 +968,73 @@ impl App {
             return;
         }
 
-        let tx = self.agent_event_tx.clone();
-        if let Some(tx) = tx {
+        let ui_tx = self.agent_event_tx.clone();
+        if let Some(ui_tx) = ui_tx {
             self.agent_busy = true;
             self.set_cat_state(CatState::Thinking);
             let msg = message.to_string();
             let project_dir = self.project_dir.clone();
 
             tokio::spawn(async move {
-                let _ = tx.send(AgentEvent::StatusUpdate("Analyzing request...".to_string()));
+                let _ = ui_tx.send(AgentEvent::StatusUpdate("Starting...".to_string()));
 
-                // Timeout after 120 seconds to prevent hanging forever
+                // Create event channel between AgentLoop and UI
+                let (agent_tx, mut agent_rx) = mpsc::unbounded_channel::<AgentStreamEvent>();
+
+                // Spawn a task to forward AgentStreamEvent → ui AgentEvent
+                let forward_tx = ui_tx.clone();
+                let forward_handle = tokio::spawn(async move {
+                    while let Some(event) = agent_rx.recv().await {
+                        let ui_event = match event {
+                            AgentStreamEvent::Status(s) => AgentEvent::StatusUpdate(s),
+                            AgentStreamEvent::Thinking(t) => AgentEvent::Thinking(t),
+                            AgentStreamEvent::ToolCall { tool, args } => {
+                                AgentEvent::ToolCall { tool, args }
+                            }
+                            AgentStreamEvent::ToolResult { tool, output, is_error } => {
+                                AgentEvent::ToolResult { tool, output: format!("{}", if is_error { "❌ " } else { "✅ " }) + &output }
+                            }
+                            AgentStreamEvent::TextDelta(_t) => continue, // skip individual deltas
+                            AgentStreamEvent::TokenUpdate { input, output, cache } => {
+                                AgentEvent::TokenUpdate { input, output, cache }
+                            }
+                            AgentStreamEvent::Error(e) => AgentEvent::Error(e),
+                            AgentStreamEvent::Completed => continue, // handled below
+                        };
+                        let _ = forward_tx.send(ui_event);
+                    }
+                });
+
                 let timeout_duration = std::time::Duration::from_secs(120);
-                let result = tokio::time::timeout(timeout_duration, run_agent_once(&msg, project_dir)).await;
+                let result = tokio::time::timeout(
+                    timeout_duration,
+                    run_agent_once_with_events(&msg, project_dir, Some(agent_tx)),
+                )
+                .await;
+
+                // Stop the forwarding task
+                forward_handle.abort();
 
                 match result {
                     Ok(Ok(agent_result)) => {
-                        if let Some(plan) = agent_result.auto_plan.as_deref()
-                            && !plan.trim().is_empty()
-                        {
-                            let _ = tx.send(AgentEvent::Thinking(format!("Plan:\n{}\n", plan.trim())));
-                        }
-                        let _ = tx.send(AgentEvent::StatusUpdate("Generating response...".to_string()));
-                        let _ = tx.send(AgentEvent::TokenUpdate {
+                        let _ = ui_tx.send(AgentEvent::TokenUpdate {
                             input: agent_result.total_usage.input_tokens,
                             output: agent_result.total_usage.output_tokens,
                             cache: agent_result.total_usage.cache_read_tokens,
                         });
-                        let _ = tx.send(AgentEvent::AgentMessage(agent_result.response));
-                        let _ = tx.send(AgentEvent::Completed);
+                        let _ = ui_tx.send(AgentEvent::AgentMessage(agent_result.response));
+                        let _ = ui_tx.send(AgentEvent::Completed);
                     }
                     Ok(Err(err)) => {
-                        let _ = tx.send(AgentEvent::Error(
-                            format!("Agent error: {}. Check API key and daemon status.", err)
-                        ));
+                        let _ = ui_tx.send(AgentEvent::Error(format!(
+                            "Agent error: {}. Check API key and daemon status.",
+                            err
+                        )));
                     }
                     Err(_timeout) => {
-                        let _ = tx.send(AgentEvent::Error(
-                            "Request timed out after 120s. The API may be unreachable or the model is taking too long.".to_string()
+                        let _ = ui_tx.send(AgentEvent::Error(
+                            "Request timed out after 120s. The API may be unreachable or the model is taking too long."
+                                .to_string(),
                         ));
                     }
                 }
@@ -1097,14 +1127,23 @@ async fn run_agent_once(
     message: &str,
     project_dir: PathBuf,
 ) -> anyhow::Result<catcode_daemon::AgentLoopResult> {
+    run_agent_once_with_events(message, project_dir, None).await
+}
+
+async fn run_agent_once_with_events(
+    message: &str,
+    project_dir: PathBuf,
+    event_tx: Option<AgentEventSender>,
+) -> anyhow::Result<catcode_daemon::AgentLoopResult> {
     AgentRuntime::new()
-        .run_once(
+        .run_once_with_events(
             message,
             &project_dir,
             AgentRuntimeOptions {
                 system_prompt: "You are CatCode, a concise coding agent inside a terminal UI. Use tools when needed and keep responses focused.".to_string(),
                 ..Default::default()
             },
+            event_tx,
         )
         .await
 }

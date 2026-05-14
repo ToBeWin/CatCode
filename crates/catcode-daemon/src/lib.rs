@@ -14,14 +14,11 @@
 //! - **CheckpointManager** — Session state persistence to disk
 
 /// The `agent_loop` module.
+pub mod agent_events;
 pub mod agent_loop;
-/// The `audit` module.
 pub mod audit;
-/// The `benchmark` module.
 pub mod benchmark;
-/// The `checkpoint` module.
 pub mod checkpoint;
-/// The `code_review` module.
 pub mod code_review;
 /// The `concurrent_session` module.
 pub mod concurrent_session;
@@ -46,6 +43,7 @@ pub mod subagent;
 /// The `swe_bench` module.
 pub mod swe_bench;
 
+pub use agent_events::{AgentEventSender, AgentStreamEvent};
 pub use agent_loop::{AgentLoop, AgentLoopError, AgentLoopResult};
 pub use audit::AuditLogMiddleware;
 pub use benchmark::{
