@@ -155,7 +155,7 @@ fn render_top_bar(f: &mut Frame, app: &App, area: Rect) {
         AgentMode::Auto => WARN,
     };
 
-    let mut spans = vec![
+    let spans = vec![
         Span::styled(" ◆ ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
         Span::styled(
             format!(" {} ", mode_label),
@@ -174,20 +174,6 @@ fn render_top_bar(f: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled(tokens, Style::default().fg(SUCCESS).bg(HEADER_BG)),
     ];
-
-    if app.cat_enabled {
-        let cat_color = match app.cat_state {
-            CatState::Idle => DIM,
-            CatState::Thinking => WARN,
-            CatState::Executing => SUCCESS,
-            CatState::Error => ERROR,
-            CatState::Done => ACCENT,
-        };
-        spans.push(Span::styled(
-            format!(" {}", app.cat_art()),
-            Style::default().fg(cat_color).bg(HEADER_BG),
-        ));
-    }
 
     let line = Line::from(spans);
     let paragraph = Paragraph::new(line).style(Style::default().bg(HEADER_BG));
@@ -221,6 +207,56 @@ fn render_main_area(f: &mut Frame, app: &App, area: Rect) {
         render_sessions_panel(f, app, chunks[0]);
         render_messages(f, app, chunks[1]);
     }
+
+    render_cat_overlay(f, app, area);
+}
+
+/// Render the cat mascot as a floating overlay in the corner.
+fn render_cat_overlay(f: &mut Frame, app: &App, area: Rect) {
+    if !app.cat_enabled {
+        return;
+    }
+
+    let cat_lines: Vec<&str> = app.cat_art().lines().collect();
+    let cat_height = cat_lines.len() as u16;
+    let cat_width = 10u16;
+
+    if area.width < cat_width + 2 || area.height < cat_height + 1 {
+        return;
+    }
+
+    let x = area.x + area.width.saturating_sub(cat_width + 2);
+    let y = area.y + 1;
+
+    let overlay_area = Rect { x, y, width: cat_width + 2, height: cat_height + 1 };
+
+    f.render_widget(Clear, overlay_area);
+
+    let cat_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(DIM));
+
+    let inner = cat_block.inner(overlay_area);
+    f.render_widget(cat_block, overlay_area);
+
+    let cat_color = match app.cat_state {
+        CatState::Idle => DIM,
+        CatState::Thinking => WARN,
+        CatState::Executing => SUCCESS,
+        CatState::Error => ERROR,
+        CatState::Done => ACCENT,
+    };
+
+    let lines: Vec<Line> = cat_lines
+        .iter()
+        .map(|line| Line::from(Span::styled(*line, Style::default().fg(cat_color))))
+        .collect();
+
+    let paragraph = Paragraph::new(lines)
+        .style(Style::default().bg(Color::Black));
+
+    f.render_widget(paragraph, inner);
 }
 
 /// Render the thinking panel showing real-time reasoning content.
