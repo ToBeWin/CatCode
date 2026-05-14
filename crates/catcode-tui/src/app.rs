@@ -977,27 +977,35 @@ impl App {
             tokio::spawn(async move {
                 let _ = tx.send(AgentEvent::StatusUpdate("Analyzing request...".to_string()));
 
-                match run_agent_once(&msg, project_dir).await {
-                    Ok(result) => {
-                        if let Some(plan) = result.auto_plan.as_deref()
+                // Timeout after 120 seconds to prevent hanging forever
+                let timeout_duration = std::time::Duration::from_secs(120);
+                let result = tokio::time::timeout(timeout_duration, run_agent_once(&msg, project_dir)).await;
+
+                match result {
+                    Ok(Ok(agent_result)) => {
+                        if let Some(plan) = agent_result.auto_plan.as_deref()
                             && !plan.trim().is_empty()
                         {
-                            let _ =
-                                tx.send(AgentEvent::Thinking(format!("Plan:\n{}\n", plan.trim())));
+                            let _ = tx.send(AgentEvent::Thinking(format!("Plan:\n{}\n", plan.trim())));
                         }
-                        let _ = tx.send(AgentEvent::StatusUpdate(
-                            "Generating response...".to_string(),
-                        ));
+                        let _ = tx.send(AgentEvent::StatusUpdate("Generating response...".to_string()));
                         let _ = tx.send(AgentEvent::TokenUpdate {
-                            input: result.total_usage.input_tokens,
-                            output: result.total_usage.output_tokens,
-                            cache: result.total_usage.cache_read_tokens,
+                            input: agent_result.total_usage.input_tokens,
+                            output: agent_result.total_usage.output_tokens,
+                            cache: agent_result.total_usage.cache_read_tokens,
                         });
-                        let _ = tx.send(AgentEvent::AgentMessage(result.response));
+                        let _ = tx.send(AgentEvent::AgentMessage(agent_result.response));
                         let _ = tx.send(AgentEvent::Completed);
                     }
-                    Err(err) => {
-                        let _ = tx.send(AgentEvent::Error(err.to_string()));
+                    Ok(Err(err)) => {
+                        let _ = tx.send(AgentEvent::Error(
+                            format!("Agent error: {}. Check API key and daemon status.", err)
+                        ));
+                    }
+                    Err(_timeout) => {
+                        let _ = tx.send(AgentEvent::Error(
+                            "Request timed out after 120s. The API may be unreachable or the model is taking too long.".to_string()
+                        ));
                     }
                 }
             });
