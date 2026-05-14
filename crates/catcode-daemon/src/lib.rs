@@ -15,20 +15,24 @@
 
 /// The `agent_loop` module.
 pub mod agent_loop;
+/// The `audit` module.
+pub mod audit;
 /// The `benchmark` module.
 pub mod benchmark;
-/// The `lsp_diagnostics` module.
-pub mod lsp_diagnostics;
 /// The `checkpoint` module.
 pub mod checkpoint;
+/// The `code_review` module.
+pub mod code_review;
 /// The `concurrent_session` module.
 pub mod concurrent_session;
 /// The `config` module.
 pub mod config;
+/// The `lsp_diagnostics` module.
+pub mod lsp_diagnostics;
 /// The `persistence` module.
 pub mod persistence;
-/// The `code_review` module.
-pub mod code_review;
+/// The `runtime` module.
+pub mod runtime;
 /// The `security_check` module.
 pub mod security_check;
 /// The `session` module.
@@ -43,24 +47,27 @@ pub mod subagent;
 pub mod swe_bench;
 
 pub use agent_loop::{AgentLoop, AgentLoopError, AgentLoopResult};
+pub use audit::AuditLogMiddleware;
 pub use benchmark::{
     BenchmarkCase, BenchmarkReport, BenchmarkResult, default_benchmark_cases, format_report_table,
 };
 pub use checkpoint::{Checkpoint, CheckpointManager, CheckpointMeta};
-pub use code_review::{
-    CodeReview, CodeReviewer, ReviewCategory, ReviewFinding, ReviewSeverity,
-};
+pub use code_review::{CodeReview, CodeReviewer, ReviewCategory, ReviewFinding, ReviewSeverity};
 pub use concurrent_session::{
     ConcurrentSessionManager, SessionCommand, SessionEvent, SessionHandle,
 };
 pub use config::Config;
 pub use persistence::Database;
+pub use runtime::{
+    AgentRuntime, AgentRuntimeOptions, build_provider, default_system_prompt, load_config,
+    load_project_rules, project_dir_or_current,
+};
 pub use session::{Session, SessionId, SessionState, SessionSummary};
 pub use session_manager::SessionManager;
 pub use subagent::{SubAgentConfig, SubAgentResult, SubAgentSpawner};
 pub use swe_bench::{
-    SweBenchConfig, SweBenchHarness, SweBenchInstance, SweBenchReport, SweBenchResult,
-    TestResults, format_summary, load_dataset, sample_instances, save_results,
+    SweBenchConfig, SweBenchHarness, SweBenchInstance, SweBenchReport, SweBenchResult, TestResults,
+    format_summary, load_dataset, sample_instances, save_results,
 };
 
 /// Create a default middleware chain with all built-in middlewares including sandbox.

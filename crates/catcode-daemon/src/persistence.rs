@@ -7,6 +7,7 @@ use crate::session::SessionState;
 ///
 /// Replaces the JSON checkpoint system with a proper relational database.
 /// Stores sessions, messages, token usage, and audit logs.
+#[derive(Clone)]
 pub struct Database {
     pool: SqlitePool,
 }
@@ -193,12 +194,11 @@ impl Database {
         session_id: &str,
     ) -> Result<Option<UsageRow>, sqlx::Error> {
         // First check if any usage exists
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM token_usage WHERE session_id = ?1",
-        )
-        .bind(session_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM token_usage WHERE session_id = ?1")
+                .bind(session_id)
+                .fetch_one(&self.pool)
+                .await?;
 
         if count.0 == 0 {
             return Ok(None);
@@ -249,10 +249,7 @@ impl Database {
     }
 
     /// Get audit log for a session.
-    pub async fn get_audit_log(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<AuditRow>, sqlx::Error> {
+    pub async fn get_audit_log(&self, session_id: &str) -> Result<Vec<AuditRow>, sqlx::Error> {
         let rows = sqlx::query_as::<_, AuditRow>(
             "SELECT * FROM audit_log WHERE session_id = ?1 ORDER BY created_at ASC",
         )
@@ -261,6 +258,92 @@ impl Database {
         .await?;
         Ok(rows)
     }
+}
+
+#[async_trait::async_trait]
+impl catcode_api::SessionStore for Database {
+    async fn list_sessions(&self) -> anyhow::Result<Vec<catcode_api::ApiSession>> {
+        let rows = Database::list_sessions(self).await?;
+        Ok(rows.into_iter().map(ApiSessionExt::from_row).collect())
+    }
+
+    async fn get_session(&self, id: &str) -> anyhow::Result<Option<catcode_api::ApiSession>> {
+        Ok(Database::get_session(self, id)
+            .await?
+            .map(ApiSessionExt::from_row))
+    }
+
+    async fn upsert_session(&self, session: catcode_api::ApiSession) -> anyhow::Result<()> {
+        Database::upsert_session(
+            self,
+            &session.id,
+            &session.name,
+            &session.state,
+            &session.project_dir,
+            &session.model_id,
+            &session.provider_id,
+            u64_to_i64(session.turn_count),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_session(&self, id: &str) -> anyhow::Result<()> {
+        Database::delete_session(self, id).await?;
+        Ok(())
+    }
+
+    async fn insert_message(
+        &self,
+        session_id: &str,
+        role: &str,
+        content: &str,
+        token_count: Option<i64>,
+    ) -> anyhow::Result<()> {
+        Database::insert_message(self, session_id, role, content, token_count).await?;
+        Ok(())
+    }
+
+    async fn record_token_usage(
+        &self,
+        session: &catcode_api::ApiSession,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_tokens: u64,
+    ) -> anyhow::Result<()> {
+        Database::record_token_usage(
+            self,
+            &session.id,
+            &session.provider_id,
+            &session.model_id,
+            u64_to_i64(input_tokens),
+            u64_to_i64(output_tokens),
+            u64_to_i64(cache_tokens),
+            0.0,
+        )
+        .await?;
+        Ok(())
+    }
+}
+
+struct ApiSessionExt;
+
+impl ApiSessionExt {
+    fn from_row(row: SessionRow) -> catcode_api::ApiSession {
+        catcode_api::ApiSession {
+            id: row.id,
+            name: row.name,
+            state: row.state,
+            project_dir: row.project_dir,
+            model_id: row.model_id,
+            provider_id: row.provider_id,
+            turn_count: row.turn_count.max(0) as u64,
+        }
+    }
+}
+
+fn u64_to_i64(value: u64) -> i64 {
+    value.min(i64::MAX as u64) as i64
 }
 
 // === Schema ===
@@ -336,7 +419,7 @@ pub struct SessionRow {
 }
 
 impl SessionRow {
-/// Parse the stored state string into a `SessionState`.
+    /// Parse the stored state string into a `SessionState`.
     pub fn parse_state(&self) -> SessionState {
         match self.state.as_str() {
             "running" => SessionState::Running,
@@ -459,8 +542,14 @@ mod tests {
             .await
             .unwrap();
 
-        let id1 = db.insert_message("s1", "user", "hello", Some(5)).await.unwrap();
-        let id2 = db.insert_message("s1", "assistant", "hi there", Some(10)).await.unwrap();
+        let id1 = db
+            .insert_message("s1", "user", "hello", Some(5))
+            .await
+            .unwrap();
+        let id2 = db
+            .insert_message("s1", "assistant", "hi there", Some(10))
+            .await
+            .unwrap();
         assert!(id1 < id2);
 
         let messages = db.get_messages("s1").await.unwrap();
@@ -532,7 +621,50 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
         };
-        assert_eq!(row.parse_state(), SessionState::Failed("timeout".to_string()));
+        assert_eq!(
+            row.parse_state(),
+            SessionState::Failed("timeout".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_api_session_store_roundtrip() {
+        let db = test_db().await;
+        let session = catcode_api::ApiSession {
+            id: "api-s1".to_string(),
+            name: "api".to_string(),
+            state: "running".to_string(),
+            project_dir: "/tmp/project".to_string(),
+            model_id: "model".to_string(),
+            provider_id: "provider".to_string(),
+            turn_count: 2,
+        };
+
+        catcode_api::SessionStore::upsert_session(&db, session.clone())
+            .await
+            .unwrap();
+        catcode_api::SessionStore::insert_message(&db, &session.id, "user", "hello", Some(3))
+            .await
+            .unwrap();
+        catcode_api::SessionStore::record_token_usage(&db, &session, 10, 5, 1)
+            .await
+            .unwrap();
+
+        let loaded = catcode_api::SessionStore::get_session(&db, &session.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.name, "api");
+        assert_eq!(loaded.turn_count, 2);
+        assert_eq!(db.get_messages(&session.id).await.unwrap().len(), 1);
+        assert_eq!(
+            db.get_session_usage(&session.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .input_tokens,
+            10
+        );
     }
 
     #[tokio::test]
@@ -541,7 +673,9 @@ mod tests {
         db.upsert_session("s1", "test", "running", "/tmp", "m", "p", 0)
             .await
             .unwrap();
-        db.insert_message("s1", "user", "hello", None).await.unwrap();
+        db.insert_message("s1", "user", "hello", None)
+            .await
+            .unwrap();
         db.record_token_usage("s1", "p", "m", 100, 50, 0, 0.01)
             .await
             .unwrap();

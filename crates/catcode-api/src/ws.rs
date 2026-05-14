@@ -1,6 +1,6 @@
 use axum::Router;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
 
@@ -12,10 +12,7 @@ pub fn ws_routes() -> Router<AppState> {
 }
 
 /// WebSocket upgrade handler.
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws(socket, state))
 }
 
@@ -96,10 +93,7 @@ mod tests {
 
     fn test_state() -> AppState {
         let (tx, _) = tokio::sync::broadcast::channel(100);
-        AppState {
-            event_tx: tx,
-            auth: crate::auth::AuthConfig::default(),
-        }
+        AppState::new(tx, crate::auth::AuthConfig::default())
     }
 
     #[tokio::test]

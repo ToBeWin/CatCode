@@ -73,7 +73,10 @@ impl StreamingToolExecutor {
         // Collect concurrent results
         for (i, handle) in handles {
             let (id, result) = handle.await.unwrap_or_else(|e| {
-                (String::new(), ToolResult::error(format!("Task panicked: {}", e)))
+                (
+                    String::new(),
+                    ToolResult::error(format!("Task panicked: {}", e)),
+                )
             });
             results[i] = Some((id, result));
         }
@@ -89,6 +92,10 @@ async fn execute_single_tool(
     ctx: &ToolContext,
 ) -> ToolResult {
     let ctx = ctx.clone();
+    let session_id = ctx
+        .session_id
+        .clone()
+        .unwrap_or_else(|| "streaming-executor".to_string());
     let tool_fn: ToolFn = Arc::new(move |c: &ToolCall| {
         let tools = tools.clone();
         let c = c.clone();
@@ -101,7 +108,7 @@ async fn execute_single_tool(
         })
     });
 
-    let mut agent_ctx = AgentContext::new("streaming-executor");
+    let mut agent_ctx = AgentContext::new(session_id);
     middleware.execute_tool(&mut agent_ctx, call, tool_fn).await
 }
 

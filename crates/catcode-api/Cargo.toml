@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 catcode-core = { path = "../catcode-core" }
+async-trait = { workspace = true }
 axum = { version = "0.8", features = ["ws"] }
 tokio = { workspace = true }
 serde = { workspace = true }

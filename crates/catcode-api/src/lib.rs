@@ -17,9 +17,12 @@ pub mod sse;
 /// The `ws` module.
 pub mod ws;
 
+use async_trait::async_trait;
 use axum::Router;
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use tokio::sync::broadcast;
+use std::sync::Arc;
+use tokio::sync::{RwLock, broadcast};
 
 /// Shared application state for the API server.
 #[derive(Clone)]
@@ -28,6 +31,94 @@ pub struct AppState {
     pub event_tx: broadcast::Sender<ApiEvent>,
     /// Authentication configuration.
     pub auth: auth::AuthConfig,
+    /// In-memory session state shared by API routes.
+    pub sessions: SharedSessions,
+    /// Optional message execution backend injected by the daemon.
+    pub runner: Option<Arc<dyn MessageRunner>>,
+    /// Optional persistent session store injected by the daemon.
+    pub store: Option<Arc<dyn SessionStore>>,
+}
+
+/// Shared session map used by REST routes.
+pub type SharedSessions = Arc<RwLock<HashMap<String, ApiSession>>>;
+
+/// API-visible session state.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ApiSession {
+    pub id: String,
+    pub name: String,
+    pub state: String,
+    pub project_dir: String,
+    pub model_id: String,
+    pub provider_id: String,
+    pub turn_count: u64,
+}
+
+/// Result produced by a message runner.
+#[derive(Debug, Clone)]
+pub struct RunMessageResult {
+    pub response: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_tokens: u64,
+}
+
+/// Backend that executes a user message for a session.
+#[async_trait]
+pub trait MessageRunner: Send + Sync {
+    async fn run_message(
+        &self,
+        session: ApiSession,
+        message: String,
+    ) -> anyhow::Result<RunMessageResult>;
+}
+
+/// Persistence backend for API session state.
+#[async_trait]
+pub trait SessionStore: Send + Sync {
+    async fn list_sessions(&self) -> anyhow::Result<Vec<ApiSession>>;
+    async fn get_session(&self, id: &str) -> anyhow::Result<Option<ApiSession>>;
+    async fn upsert_session(&self, session: ApiSession) -> anyhow::Result<()>;
+    async fn delete_session(&self, id: &str) -> anyhow::Result<()>;
+    async fn insert_message(
+        &self,
+        session_id: &str,
+        role: &str,
+        content: &str,
+        token_count: Option<i64>,
+    ) -> anyhow::Result<()>;
+    async fn record_token_usage(
+        &self,
+        session: &ApiSession,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_tokens: u64,
+    ) -> anyhow::Result<()>;
+}
+
+impl AppState {
+    /// Create app state with an empty in-memory session store.
+    pub fn new(event_tx: broadcast::Sender<ApiEvent>, auth: auth::AuthConfig) -> Self {
+        Self {
+            event_tx,
+            auth,
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+            runner: None,
+            store: None,
+        }
+    }
+
+    /// Attach a message runner to execute API messages.
+    pub fn with_runner(mut self, runner: Arc<dyn MessageRunner>) -> Self {
+        self.runner = Some(runner);
+        self
+    }
+
+    /// Attach a persistent session store.
+    pub fn with_store(mut self, store: Arc<dyn SessionStore>) -> Self {
+        self.store = Some(store);
+        self
+    }
 }
 
 /// Events broadcast to SSE clients.
@@ -36,29 +127,23 @@ pub struct AppState {
 /// Events broadcast to SSE/WebSocket clients.
 pub enum ApiEvent {
     #[serde(rename = "session_created")]
-/// [`SessionCreated`].
+    /// [`SessionCreated`].
     SessionCreated { session_id: String, name: String },
     #[serde(rename = "session_state")]
-/// [`SessionState`].
-    SessionState {
-        session_id: String,
-        state: String,
-    },
+    /// [`SessionState`].
+    SessionState { session_id: String, state: String },
     #[serde(rename = "agent_message")]
-/// [`AgentMessage`].
-    AgentMessage {
-        session_id: String,
-        content: String,
-    },
+    /// [`AgentMessage`].
+    AgentMessage { session_id: String, content: String },
     #[serde(rename = "tool_call")]
-/// [`ToolCall`].
+    /// [`ToolCall`].
     ToolCall {
         session_id: String,
         tool: String,
         args: serde_json::Value,
     },
     #[serde(rename = "tool_result")]
-/// [`ToolResult`].
+    /// [`ToolResult`].
     ToolResult {
         session_id: String,
         tool: String,
@@ -66,7 +151,7 @@ pub enum ApiEvent {
         is_error: bool,
     },
     #[serde(rename = "token_usage")]
-/// [`TokenUsage`].
+    /// [`TokenUsage`].
     TokenUsage {
         session_id: String,
         input: u64,
@@ -115,13 +200,13 @@ mod tests {
 
     fn test_state() -> AppState {
         let (tx, _) = broadcast::channel(100);
-        AppState {
-            event_tx: tx,
-            auth: auth::AuthConfig {
+        AppState::new(
+            tx,
+            auth::AuthConfig {
                 mode: auth::AuthMode::LocalOnly,
                 token: None,
             },
-        }
+        )
     }
 
     #[tokio::test]
@@ -271,23 +356,20 @@ mod tests {
     #[test]
     fn test_app_state_creation() {
         let (tx, _rx) = broadcast::channel(10);
-        let state = AppState {
-            event_tx: tx,
-            auth: auth::AuthConfig::default(),
-        };
+        let state = AppState::new(tx, auth::AuthConfig::default());
         assert_eq!(state.event_tx.receiver_count(), 1);
     }
 
     #[tokio::test]
     async fn test_build_router_with_token_auth() {
         let (tx, _) = broadcast::channel(100);
-        let state = AppState {
-            event_tx: tx,
-            auth: auth::AuthConfig {
+        let state = AppState::new(
+            tx,
+            auth::AuthConfig {
                 mode: auth::AuthMode::Token,
                 token: Some("test-token".to_string()),
             },
-        };
+        );
         // Without auth middleware on routes, this should still work
         let app = build_router(state);
         let req = Request::builder()

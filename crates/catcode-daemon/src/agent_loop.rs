@@ -155,6 +155,17 @@ impl AgentLoop {
         user_message: &str,
         project_dir: &Path,
     ) -> Result<AgentLoopResult, AgentLoopError> {
+        self.run_intelligent_with_session(user_message, project_dir, None)
+            .await
+    }
+
+    /// Run the agent loop with an optional externally managed session id.
+    pub async fn run_intelligent_with_session(
+        &mut self,
+        user_message: &str,
+        project_dir: &Path,
+        session_id: Option<String>,
+    ) -> Result<AgentLoopResult, AgentLoopError> {
         let mut auto_plan: Option<String> = None;
 
         if self.auto_plan_enabled {
@@ -172,7 +183,7 @@ impl AgentLoop {
             }
         }
 
-        let mut result = self.run(user_message, project_dir).await?;
+        let mut result = self.run_with_session(user_message, project_dir, session_id).await?;
         result.auto_plan = auto_plan;
         Ok(result)
     }
@@ -185,6 +196,16 @@ impl AgentLoop {
         &mut self,
         user_message: &str,
         project_dir: &Path,
+    ) -> Result<AgentLoopResult, AgentLoopError> {
+        self.run_with_session(user_message, project_dir, None).await
+    }
+
+    /// Run the agent loop for a single user message with an optional external session id.
+    pub async fn run_with_session(
+        &mut self,
+        user_message: &str,
+        project_dir: &Path,
+        session_id: Option<String>,
     ) -> Result<AgentLoopResult, AgentLoopError> {
         // Reset per-run tracking
         self.failed_tools.clear();
@@ -357,7 +378,7 @@ impl AgentLoop {
             all_messages.push(assistant_msg);
 
             let tool_ctx = ToolContext {
-                session_id: None,
+                session_id: session_id.clone(),
                 project_dir: Some(project_dir.to_path_buf()),
                 working_dir: Some(project_dir.to_path_buf()),
                 dry_run: false,

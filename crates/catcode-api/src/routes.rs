@@ -5,7 +5,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::AppState;
+use crate::{ApiSession, AppState};
 
 /// Session management routes.
 pub fn session_routes() -> Router<AppState> {
@@ -65,7 +65,7 @@ pub struct ApiResponse<T: Serialize> {
 }
 
 impl<T: Serialize> ApiResponse<T> {
-/// Create a success API response.
+    /// Create a success API response.
     pub fn success(data: T) -> Self {
         Self {
             ok: true,
@@ -74,7 +74,7 @@ impl<T: Serialize> ApiResponse<T> {
         }
     }
 
-/// Create an error API response.
+    /// Create an error API response.
     pub fn error(msg: impl Into<String>) -> Self {
         Self {
             ok: false,
@@ -87,11 +87,26 @@ impl<T: Serialize> ApiResponse<T> {
 // === Handlers ===
 
 /// List all sessions.
-async fn list_sessions(
-    State(_state): State<AppState>,
-) -> impl IntoResponse {
-    // Placeholder — in production, this queries the Database
-    Json(ApiResponse::<Vec<SessionResponse>>::success(vec![]))
+async fn list_sessions(State(state): State<AppState>) -> impl IntoResponse {
+    if let Some(store) = state.store.clone() {
+        return match store.list_sessions().await {
+            Ok(list) => {
+                let mut list: Vec<SessionResponse> =
+                    list.iter().map(SessionResponse::from).collect();
+                list.sort_by(|a, b| a.name.cmp(&b.name));
+                Json(ApiResponse::<Vec<SessionResponse>>::success(list))
+            }
+            Err(err) => Json(ApiResponse::<Vec<SessionResponse>>::error(format!(
+                "Failed to list sessions: {}",
+                err
+            ))),
+        };
+    }
+
+    let sessions = state.sessions.read().await;
+    let mut list: Vec<SessionResponse> = sessions.values().map(SessionResponse::from).collect();
+    list.sort_by(|a, b| a.name.cmp(&b.name));
+    Json(ApiResponse::<Vec<SessionResponse>>::success(list))
 }
 
 /// Create a new session.
@@ -103,43 +118,93 @@ async fn create_session(
     let model = req.model_id.unwrap_or_else(|| "deepseek-chat".to_string());
     let provider = req.provider_id.unwrap_or_else(|| "deepseek".to_string());
 
-    // Broadcast event
-    let _ = state.event_tx.send(crate::ApiEvent::SessionCreated {
-        session_id: session_id.clone(),
+    let session = ApiSession {
+        id: session_id.clone(),
         name: req.name.clone(),
-    });
-
-    let resp = SessionResponse {
-        id: session_id,
-        name: req.name,
         state: "running".to_string(),
+        project_dir: req.project_dir,
         model_id: model,
         provider_id: provider,
         turn_count: 0,
     };
+
+    let resp = SessionResponse::from(&session);
+    state
+        .sessions
+        .write()
+        .await
+        .insert(session_id.clone(), session.clone());
+    if let Some(store) = state.store.clone()
+        && let Err(err) = store.upsert_session(session).await
+    {
+        tracing::warn!(error = %err, "Failed to persist created session");
+    }
+
+    // Broadcast event
+    let _ = state.event_tx.send(crate::ApiEvent::SessionCreated {
+        session_id: session_id.clone(),
+        name: resp.name.clone(),
+    });
 
     (StatusCode::CREATED, Json(ApiResponse::success(resp)))
 }
 
 /// Get a session by ID.
 async fn get_session(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> impl IntoResponse {
-    // Placeholder
-    Json(ApiResponse::<SessionResponse>::error(format!(
-        "Session not found: {}",
-        id
-    )))
+    if let Some(store) = state.store.clone() {
+        return match store.get_session(&id).await {
+            Ok(Some(session)) => Json(ApiResponse::success(SessionResponse::from(&session))),
+            Ok(None) => Json(ApiResponse::<SessionResponse>::error(format!(
+                "Session not found: {}",
+                id
+            ))),
+            Err(err) => Json(ApiResponse::<SessionResponse>::error(format!(
+                "Failed to get session: {}",
+                err
+            ))),
+        };
+    }
+
+    let sessions = state.sessions.read().await;
+    match sessions.get(&id) {
+        Some(session) => Json(ApiResponse::success(SessionResponse::from(session))),
+        None => Json(ApiResponse::<SessionResponse>::error(format!(
+            "Session not found: {}",
+            id
+        ))),
+    }
 }
 
 /// Delete a session.
 async fn delete_session(
-    State(_state): State<AppState>,
-    axum::extract::Path(_id): axum::extract::Path<String>,
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
 ) -> impl IntoResponse {
-    // Placeholder
-    Json(ApiResponse::<()>::success(()))
+    let removed = state.sessions.write().await.remove(&id);
+    let persisted = if let Some(store) = state.store.clone() {
+        match store.delete_session(&id).await {
+            Ok(()) => true,
+            Err(err) => {
+                tracing::warn!(error = %err, session_id = %id, "Failed to delete persisted session");
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    if removed.is_some() || persisted {
+        let _ = state.event_tx.send(crate::ApiEvent::SessionState {
+            session_id: id,
+            state: "deleted".to_string(),
+        });
+        Json(ApiResponse::<()>::success(()))
+    } else {
+        Json(ApiResponse::<()>::error("Session not found"))
+    }
 }
 
 /// Send a message to a session.
@@ -148,33 +213,163 @@ async fn send_message(
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(req): Json<SendMessageRequest>,
 ) -> impl IntoResponse {
+    let Some(mut session) = load_session_for_update(&state, &id).await else {
+        return Json(ApiResponse::<serde_json::Value>::error(format!(
+            "Session not found: {}",
+            id
+        )));
+    };
+    session.turn_count += 1;
+    persist_session_state(&state, session.clone()).await;
+    if let Some(store) = state.store.clone()
+        && let Err(err) = store.insert_message(&id, "user", &req.content, None).await
+    {
+        tracing::warn!(error = %err, session_id = %id, "Failed to persist user message");
+    }
+
     // Broadcast the message event
     let _ = state.event_tx.send(crate::ApiEvent::AgentMessage {
         session_id: id.clone(),
         content: req.content.clone(),
     });
 
+    if let Some(runner) = state.runner.clone() {
+        let session_for_usage = session.clone();
+        match runner.run_message(session, req.content.clone()).await {
+            Ok(result) => {
+                let _ = state.event_tx.send(crate::ApiEvent::AgentMessage {
+                    session_id: id.clone(),
+                    content: result.response.clone(),
+                });
+                let _ = state.event_tx.send(crate::ApiEvent::TokenUsage {
+                    session_id: id.clone(),
+                    input: result.input_tokens,
+                    output: result.output_tokens,
+                    cache: result.cache_tokens,
+                    cost_usd: 0.0,
+                });
+                if let Some(store) = state.store.clone() {
+                    if let Err(err) = store
+                        .insert_message(&id, "assistant", &result.response, None)
+                        .await
+                    {
+                        tracing::warn!(error = %err, session_id = %id, "Failed to persist assistant message");
+                    }
+                    if let Err(err) = store
+                        .record_token_usage(
+                            &session_for_usage,
+                            result.input_tokens,
+                            result.output_tokens,
+                            result.cache_tokens,
+                        )
+                        .await
+                    {
+                        tracing::warn!(error = %err, session_id = %id, "Failed to persist token usage");
+                    }
+                }
+                return Json(ApiResponse::success(serde_json::json!({
+                    "session_id": id,
+                    "message": req.content,
+                    "status": "completed",
+                    "response": result.response,
+                    "usage": {
+                        "input": result.input_tokens,
+                        "output": result.output_tokens,
+                        "cache": result.cache_tokens
+                    }
+                })));
+            }
+            Err(err) => {
+                let _ = state.event_tx.send(crate::ApiEvent::Error {
+                    session_id: Some(id.clone()),
+                    error: err.to_string(),
+                });
+                return Json(ApiResponse::<serde_json::Value>::error(format!(
+                    "agent execution failed: {}",
+                    err
+                )));
+            }
+        }
+    }
+
     Json(ApiResponse::success(serde_json::json!({
         "session_id": id,
         "message": req.content,
-        "status": "sent"
+        "status": "queued"
     })))
 }
 
 /// Pause a session.
 async fn pause_session(
-    State(_state): State<AppState>,
-    axum::extract::Path(_id): axum::extract::Path<String>,
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
 ) -> impl IntoResponse {
-    Json(ApiResponse::<()>::success(()))
+    update_session_state(state, id, "paused").await
 }
 
 /// Resume a session.
 async fn resume_session(
-    State(_state): State<AppState>,
-    axum::extract::Path(_id): axum::extract::Path<String>,
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
 ) -> impl IntoResponse {
-    Json(ApiResponse::<()>::success(()))
+    update_session_state(state, id, "running").await
+}
+
+async fn update_session_state(
+    state: AppState,
+    id: String,
+    next_state: &'static str,
+) -> Json<ApiResponse<()>> {
+    if let Some(mut session) = load_session_for_update(&state, &id).await {
+        session.state = next_state.to_string();
+        persist_session_state(&state, session).await;
+        let _ = state.event_tx.send(crate::ApiEvent::SessionState {
+            session_id: id,
+            state: next_state.to_string(),
+        });
+        Json(ApiResponse::<()>::success(()))
+    } else {
+        Json(ApiResponse::<()>::error("Session not found"))
+    }
+}
+
+async fn load_session_for_update(state: &AppState, id: &str) -> Option<ApiSession> {
+    if let Some(store) = state.store.clone() {
+        match store.get_session(id).await {
+            Ok(session) => return session,
+            Err(err) => {
+                tracing::warn!(error = %err, session_id = %id, "Failed to load persisted session");
+            }
+        }
+    }
+    state.sessions.read().await.get(id).cloned()
+}
+
+async fn persist_session_state(state: &AppState, session: ApiSession) {
+    state
+        .sessions
+        .write()
+        .await
+        .insert(session.id.clone(), session.clone());
+
+    if let Some(store) = state.store.clone()
+        && let Err(err) = store.upsert_session(session).await
+    {
+        tracing::warn!(error = %err, "Failed to persist session");
+    }
+}
+
+impl From<&ApiSession> for SessionResponse {
+    fn from(session: &ApiSession) -> Self {
+        Self {
+            id: session.id.clone(),
+            name: session.name.clone(),
+            state: session.state.clone(),
+            model_id: session.model_id.clone(),
+            provider_id: session.provider_id.clone(),
+            turn_count: session.turn_count,
+        }
+    }
 }
 
 /// Health check.
@@ -214,15 +409,32 @@ async fn list_providers() -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use axum::Router;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::util::ServiceExt;
 
     fn test_state() -> AppState {
         let (tx, _) = tokio::sync::broadcast::channel(100);
-        AppState {
-            event_tx: tx,
-            auth: crate::auth::AuthConfig::default(),
+        AppState::new(tx, crate::auth::AuthConfig::default())
+    }
+
+    struct TestRunner;
+
+    #[async_trait]
+    impl crate::MessageRunner for TestRunner {
+        async fn run_message(
+            &self,
+            _session: ApiSession,
+            message: String,
+        ) -> anyhow::Result<crate::RunMessageResult> {
+            Ok(crate::RunMessageResult {
+                response: format!("ran: {message}"),
+                input_tokens: 7,
+                output_tokens: 3,
+                cache_tokens: 1,
+            })
         }
     }
 
@@ -261,8 +473,113 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_session_lifecycle_uses_shared_state() {
+        let app = crate::build_router(test_state());
+        let body = serde_json::to_string(&CreateSessionRequest {
+            name: "stateful".to_string(),
+            project_dir: "/tmp/project".to_string(),
+            model_id: Some("mock-model".to_string()),
+            provider_id: Some("mock".to_string()),
+        })
+        .unwrap();
+
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create_resp.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(create_resp.into_body(), 2048)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let id = json["data"]["id"].as_str().unwrap();
+
+        let get_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/sessions/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(get_resp.into_body(), 2048)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["data"]["name"].as_str().unwrap(), "stateful");
+
+        let pause_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/sessions/{id}/pause"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(pause_resp.status(), StatusCode::OK);
+
+        let get_paused = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/sessions/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(get_paused.into_body(), 2048)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["data"]["state"].as_str().unwrap(), "paused");
+
+        let delete_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/api/v1/sessions/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(delete_resp.status(), StatusCode::OK);
+
+        let missing_resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/sessions/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(missing_resp.into_body(), 2048)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(!json["ok"].as_bool().unwrap());
+    }
+
+    #[tokio::test]
     async fn test_send_message() {
         let app = crate::build_router(test_state());
+        let session_id = create_test_session(app.clone()).await;
         let body = serde_json::to_string(&SendMessageRequest {
             content: "hello".to_string(),
         })
@@ -270,7 +587,7 @@ mod tests {
 
         let req = Request::builder()
             .method("POST")
-            .uri("/api/v1/sessions/test-id/message")
+            .uri(format!("/api/v1/sessions/{session_id}/message"))
             .header("content-type", "application/json")
             .body(Body::from(body))
             .unwrap();
@@ -399,6 +716,7 @@ mod tests {
     #[tokio::test]
     async fn test_send_message_response_body() {
         let app = crate::build_router(test_state());
+        let session_id = create_test_session(app.clone()).await;
         let body = serde_json::to_string(&SendMessageRequest {
             content: "test message".to_string(),
         })
@@ -406,7 +724,7 @@ mod tests {
 
         let req = Request::builder()
             .method("POST")
-            .uri("/api/v1/sessions/sess-001/message")
+            .uri(format!("/api/v1/sessions/{session_id}/message"))
             .header("content-type", "application/json")
             .body(Body::from(body))
             .unwrap();
@@ -417,6 +735,60 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(json["ok"].as_bool().unwrap());
         assert_eq!(json["data"]["message"].as_str().unwrap(), "test message");
+    }
+
+    #[tokio::test]
+    async fn test_send_message_uses_injected_runner() {
+        let state = test_state().with_runner(std::sync::Arc::new(TestRunner));
+        let app = crate::build_router(state);
+        let session_id = create_test_session(app.clone()).await;
+        let body = serde_json::to_string(&SendMessageRequest {
+            content: "execute".to_string(),
+        })
+        .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/sessions/{session_id}/message"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 2048).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["data"]["status"].as_str().unwrap(), "completed");
+        assert_eq!(json["data"]["response"].as_str().unwrap(), "ran: execute");
+        assert_eq!(json["data"]["usage"]["input"].as_u64().unwrap(), 7);
+    }
+
+    async fn create_test_session(app: Router) -> String {
+        let body = serde_json::to_string(&CreateSessionRequest {
+            name: "message-target".to_string(),
+            project_dir: "/tmp".to_string(),
+            model_id: None,
+            provider_id: None,
+        })
+        .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), 2048).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        json["data"]["id"].as_str().unwrap().to_string()
     }
 
     #[tokio::test]

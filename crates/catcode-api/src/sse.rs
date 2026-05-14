@@ -4,8 +4,8 @@ use axum::routing::get;
 use futures_util::stream::Stream;
 use std::convert::Infallible;
 use std::time::Duration;
-use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
 
 use crate::AppState;
 
@@ -31,10 +31,7 @@ async fn sse_handler(
     // Add a heartbeat every 15 seconds
     let stream = stream.chain(futures_util::stream::unfold((), |()| async {
         tokio::time::sleep(Duration::from_secs(15)).await;
-        Some((
-            Ok(Event::default().event("heartbeat").data("ping")),
-            (),
-        ))
+        Some((Ok(Event::default().event("heartbeat").data("ping")), ()))
     }));
 
     Sse::new(stream).keep_alive(KeepAlive::default())
@@ -49,10 +46,7 @@ mod tests {
 
     fn test_state() -> AppState {
         let (tx, _) = tokio::sync::broadcast::channel(100);
-        AppState {
-            event_tx: tx,
-            auth: crate::auth::AuthConfig::default(),
-        }
+        AppState::new(tx, crate::auth::AuthConfig::default())
     }
 
     #[tokio::test]

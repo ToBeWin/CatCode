@@ -4,11 +4,13 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-catcode-core = { path = "../catcode-core" }
+catcode-daemon = { path = "../catcode-daemon" }
 clap = { version = "4", features = ["derive"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 dirs = "6"
+reqwest = { workspace = true }
+serde_json = { workspace = true }
 
 [[bin]]
 name = "catcode"

@@ -1,6 +1,6 @@
 use catcode_daemon::{
-    BenchmarkCase, BenchmarkReport, Session, SessionManager, SessionState,
-    default_benchmark_cases,
+    AgentRuntime, AgentRuntimeOptions, BenchmarkCase, BenchmarkReport, Session, SessionManager,
+    SessionState, default_benchmark_cases,
 };
 use std::path::PathBuf;
 use std::time::Instant;
@@ -10,28 +10,28 @@ use tokio::sync::mpsc;
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     /// Agent produced text output.
-/// [`AgentMessage`].
+    /// [`AgentMessage`].
     AgentMessage(String),
     /// Real-time thinking content delta.
-/// [`Thinking`].
+    /// [`Thinking`].
     Thinking(String),
     /// Agent is calling a tool.
-/// [`ToolCall`].
+    /// [`ToolCall`].
     ToolCall { tool: String, args: String },
     /// Tool execution completed.
-/// [`ToolResult`].
+    /// [`ToolResult`].
     ToolResult { tool: String, output: String },
     /// Status updates during processing (e.g. "Calling DeepSeek...").
-/// [`StatusUpdate`].
+    /// [`StatusUpdate`].
     StatusUpdate(String),
     /// Agent finished processing.
-/// [`Completed`].
+    /// [`Completed`].
     Completed,
     /// Agent encountered an error.
-/// [`Error`].
+    /// [`Error`].
     Error(String),
     /// Token usage update.
-/// [`TokenUpdate`].
+    /// [`TokenUpdate`].
     TokenUpdate { input: u64, output: u64, cache: u64 },
 }
 
@@ -39,10 +39,10 @@ pub enum AgentEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputMode {
     /// Normal mode — typing messages to the agent.
-/// [`Normal`].
+    /// [`Normal`].
     Normal,
     /// Command mode — typing a `/` command.
-/// [`Command`].
+    /// [`Command`].
     Command,
 }
 
@@ -50,19 +50,19 @@ pub enum InputMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CatState {
     /// Idle — cat is sleeping.
-/// [`Idle`].
+    /// [`Idle`].
     Idle,
     /// Thinking — cat is pondering.
-/// [`Thinking`].
+    /// [`Thinking`].
     Thinking,
     /// Executing — cat is working.
-/// [`Executing`].
+    /// [`Executing`].
     Executing,
     /// Error — cat is surprised.
-/// [`Error`].
+    /// [`Error`].
     Error,
     /// Done — cat is happy.
-/// [`Done`].
+    /// [`Done`].
     Done,
 }
 
@@ -77,7 +77,7 @@ impl CatState {
         }
     }
 
-/// Label.
+    /// Label.
     pub fn label(&self) -> &'static str {
         match self {
             CatState::Idle => "sleeping",
@@ -99,26 +99,26 @@ const CAT_DONE: &str = "  =^.^=~";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentMode {
     /// Plan mode — agent only analyzes and plans, no tool execution.
-/// [`Plan`].
+    /// [`Plan`].
     Plan,
     /// Act mode — agent executes tools normally (default).
-/// [`Act`].
+    /// [`Act`].
     Act,
     /// Auto mode — agent plans first, then executes after user approval.
-/// [`Auto`].
+    /// [`Auto`].
     Auto,
 }
 
 /// Goal status.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GoalStatus {
-/// [`Active`].
+    /// [`Active`].
     Active,
-/// [`Paused`].
+    /// [`Paused`].
     Paused,
-/// [`BudgetLimited`].
+    /// [`BudgetLimited`].
     BudgetLimited,
-/// [`Complete`].
+    /// [`Complete`].
     Complete,
 }
 
@@ -141,7 +141,7 @@ impl AgentMode {
         }
     }
 
-/// Description.
+    /// Description.
     pub fn description(&self) -> &'static str {
         match self {
             AgentMode::Plan => "Planning only — no tool execution",
@@ -162,13 +162,13 @@ pub struct ChatMessage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// [`MessageRole`]
 pub enum MessageRole {
-/// [`User`].
+    /// [`User`].
     User,
-/// [`Assistant`].
+    /// [`Assistant`].
     Assistant,
-/// [`System`].
+    /// [`System`].
     System,
-/// [`Tool`].
+    /// [`Tool`].
     Tool,
 }
 
@@ -495,9 +495,7 @@ impl App {
             }
             "close" => {
                 if let Some(id) = self.active_session.clone() {
-                    let _ = self
-                        .sessions
-                        .update_state(&id, SessionState::Completed);
+                    let _ = self.sessions.update_state(&id, SessionState::Completed);
                     self.active_session = None;
                     self.messages.clear();
                     self.status = "Session closed".to_string();
@@ -639,8 +637,7 @@ impl App {
                             self.status = "Benchmark results cleared".to_string();
                         }
                         _ => {
-                            self.status =
-                                "Usage: /benchmark list|results|clear".to_string();
+                            self.status = "Usage: /benchmark list|results|clear".to_string();
                         }
                     }
                 } else {
@@ -693,11 +690,7 @@ impl App {
     pub fn switch_to_session_by_index(&mut self, index: usize) {
         let sessions = self.sessions.list();
         if index == 0 || index > sessions.len() {
-            self.status = format!(
-                "Invalid index: {} (valid: 1-{})",
-                index,
-                sessions.len()
-            );
+            self.status = format!("Invalid index: {} (valid: 1-{})", index, sessions.len());
             return;
         }
         let session = &sessions[index - 1];
@@ -739,7 +732,11 @@ impl App {
     /// Set the agent mode.
     pub fn set_agent_mode(&mut self, mode: AgentMode) {
         self.agent_mode = mode;
-        self.status = format!("Mode: {} — {}", self.agent_mode.label(), self.agent_mode.description());
+        self.status = format!(
+            "Mode: {} — {}",
+            self.agent_mode.label(),
+            self.agent_mode.description()
+        );
     }
 
     /// Toggle between Plan and Act mode.
@@ -940,7 +937,6 @@ impl App {
     }
 
     /// Send a message to the agent and process it in the background.
-    /// This spawns a background task that simulates agent processing.
     pub fn send_to_agent(&mut self, message: &str) {
         if self.agent_busy {
             self.status = "Agent is still processing...".to_string();
@@ -952,40 +948,34 @@ impl App {
             self.agent_busy = true;
             self.set_cat_state(CatState::Thinking);
             let msg = message.to_string();
+            let project_dir = self.project_dir.clone();
 
-            // Spawn a background task to simulate agent processing
             tokio::spawn(async move {
                 let _ = tx.send(AgentEvent::StatusUpdate("Analyzing request...".to_string()));
 
-                // Simulate thinking time with real-time updates
-                for chunk in [
-                    "Let me analyze your request...\n",
-                    "First, I'll check what tools are available.\n",
-                    "I see you've asked about the codebase.\n",
-                    "Let me formulate a response for you.\n",
-                ] {
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                    let _ = tx.send(AgentEvent::Thinking(chunk.to_string()));
+                match run_agent_once(&msg, project_dir).await {
+                    Ok(result) => {
+                        if let Some(plan) = result.auto_plan.as_deref()
+                            && !plan.trim().is_empty()
+                        {
+                            let _ =
+                                tx.send(AgentEvent::Thinking(format!("Plan:\n{}\n", plan.trim())));
+                        }
+                        let _ = tx.send(AgentEvent::StatusUpdate(
+                            "Generating response...".to_string(),
+                        ));
+                        let _ = tx.send(AgentEvent::TokenUpdate {
+                            input: result.total_usage.input_tokens,
+                            output: result.total_usage.output_tokens,
+                            cache: result.total_usage.cache_read_tokens,
+                        });
+                        let _ = tx.send(AgentEvent::AgentMessage(result.response));
+                        let _ = tx.send(AgentEvent::Completed);
+                    }
+                    Err(err) => {
+                        let _ = tx.send(AgentEvent::Error(err.to_string()));
+                    }
                 }
-
-                let _ = tx.send(AgentEvent::StatusUpdate("Executing tool...".to_string()));
-
-                // Simulate tool call
-                let _ = tx.send(AgentEvent::ToolCall {
-                    tool: "thinking".to_string(),
-                    args: "{}".to_string(),
-                });
-
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-
-                let _ = tx.send(AgentEvent::StatusUpdate("Generating response...".to_string()));
-
-                // Generate a response based on the input
-                let response = generate_response(&msg);
-
-                // Send the response
-                let _ = tx.send(AgentEvent::AgentMessage(response));
-                let _ = tx.send(AgentEvent::Completed);
             });
         }
     }
@@ -1037,10 +1027,7 @@ impl App {
                     self.set_cat_state(CatState::Executing);
                 }
                 AgentEvent::ToolResult { tool, output } => {
-                    self.add_message(
-                        MessageRole::Tool,
-                        format!("{} result: {}", tool, output),
-                    );
+                    self.add_message(MessageRole::Tool, format!("{} result: {}", tool, output));
                 }
                 AgentEvent::StatusUpdate(msg) => {
                     self.busy_message = msg;
@@ -1059,7 +1046,11 @@ impl App {
                     self.spinner_frame = 0;
                     self.set_cat_state(CatState::Error);
                 }
-                AgentEvent::TokenUpdate { input, output, cache } => {
+                AgentEvent::TokenUpdate {
+                    input,
+                    output,
+                    cache,
+                } => {
                     self.token_display.input_tokens += input;
                     self.token_display.output_tokens += output;
                     self.token_display.cache_tokens += cache;
@@ -1070,37 +1061,20 @@ impl App {
     }
 }
 
-/// Generate a simple response based on user input.
-/// This is a placeholder until full agent integration.
-fn generate_response(input: &str) -> String {
-    let lower = input.to_lowercase();
-    if lower.contains("hello") || lower.contains("hi") {
-        "Hello! I'm CatCode, your AI coding assistant. How can I help you today?".to_string()
-    } else if lower.contains("help") {
-        "I can help you with coding tasks. Try asking me to:\n\
-         - Read or write files\n\
-         - Run commands\n\
-         - Explain code\n\
-         - Fix bugs\n\
-         Use /help for available commands.".to_string()
-    } else if lower.contains("test") {
-        "I'd be happy to help with testing! You can:\n\
-         - Run existing tests with `cargo test`\n\
-         - Write new tests\n\
-         - Analyze test coverage".to_string()
-    } else if lower.contains("bug") || lower.contains("fix") {
-        "Let me help you fix that bug. Could you provide more details about:\n\
-         - What's the expected behavior?\n\
-         - What's the actual behavior?\n\
-         - Any error messages?".to_string()
-    } else {
-        format!(
-            "I received your message: \"{}\"\n\n\
-             I'm currently in demo mode. Full agent integration is coming soon!\n\
-             For now, try asking about testing, bugs, or say hello.",
-            input
+async fn run_agent_once(
+    message: &str,
+    project_dir: PathBuf,
+) -> anyhow::Result<catcode_daemon::AgentLoopResult> {
+    AgentRuntime::new()
+        .run_once(
+            message,
+            &project_dir,
+            AgentRuntimeOptions {
+                system_prompt: "You are CatCode, a concise coding agent inside a terminal UI. Use tools when needed and keep responses focused.".to_string(),
+                ..Default::default()
+            },
         )
-    }
+        .await
 }
 
 /// Format elapsed seconds into a human-readable string.
