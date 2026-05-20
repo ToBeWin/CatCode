@@ -304,6 +304,24 @@ impl catcode_api::SessionStore for Database {
         Ok(())
     }
 
+    async fn list_messages(
+        &self,
+        session_id: &str,
+    ) -> anyhow::Result<Vec<catcode_api::MessageEntry>> {
+        let rows = Database::get_messages(self, session_id).await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| catcode_api::MessageEntry {
+                id: row.id,
+                session_id: row.session_id,
+                role: row.role,
+                content: row.content,
+                token_count: row.token_count,
+                created_at: row.created_at,
+            })
+            .collect())
+    }
+
     async fn record_token_usage(
         &self,
         session: &catcode_api::ApiSession,
@@ -323,6 +341,43 @@ impl catcode_api::SessionStore for Database {
         )
         .await?;
         Ok(())
+    }
+
+    async fn get_usage(&self, session_id: &str) -> anyhow::Result<catcode_api::UsageSummary> {
+        let usage = Database::get_session_usage(self, session_id).await?;
+        Ok(usage
+            .map(|row| {
+                let total_tokens = row.input_tokens + row.output_tokens + row.cache_read_tokens;
+                catcode_api::UsageSummary {
+                    input_tokens: row.input_tokens,
+                    output_tokens: row.output_tokens,
+                    cache_read_tokens: row.cache_read_tokens,
+                    total_tokens,
+                    cost_usd: row.cost_usd,
+                }
+            })
+            .unwrap_or_default())
+    }
+
+    async fn list_audit_log(
+        &self,
+        session_id: &str,
+    ) -> anyhow::Result<Vec<catcode_api::AuditLogEntry>> {
+        let rows = Database::get_audit_log(self, session_id).await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| catcode_api::AuditLogEntry {
+                id: row.id,
+                session_id: row.session_id,
+                operation: row.operation,
+                tool: row.tool,
+                args: row.args,
+                level: row.level,
+                approved_by: row.approved_by,
+                result: row.result,
+                created_at: row.created_at,
+            })
+            .collect())
     }
 }
 

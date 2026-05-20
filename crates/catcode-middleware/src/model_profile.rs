@@ -5,13 +5,13 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InstructionStyle {
     /// Strong models: concise, minimal instructions.
-/// [`Concise`].
+    /// [`Concise`].
     Concise,
     /// Weaker models: detailed, step-by-step instructions.
-/// [`Explicit`].
+    /// [`Explicit`].
     Explicit,
     /// Reasoning models: encourage chain-of-thought.
-/// [`ChainOfThought`].
+    /// [`ChainOfThought`].
     ChainOfThought,
 }
 
@@ -19,13 +19,13 @@ pub enum InstructionStyle {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolCallFormat {
     /// OpenAI-compatible function calling.
-/// [`OpenAI`].
+    /// [`OpenAI`].
     OpenAI,
     /// Anthropic-style tool use.
-/// [`Anthropic`].
+    /// [`Anthropic`].
     Anthropic,
     /// XML-based tool calls (for models that prefer XML).
-/// [`Xml`].
+    /// [`Xml`].
     Xml,
 }
 
@@ -249,10 +249,7 @@ mod tests {
     #[test]
     fn test_reasoning_profile() {
         let profile = ModelProfile::reasoning("o3");
-        assert_eq!(
-            profile.instruction_style,
-            InstructionStyle::ChainOfThought
-        );
+        assert_eq!(profile.instruction_style, InstructionStyle::ChainOfThought);
     }
 
     #[test]
@@ -324,10 +321,7 @@ mod tests {
         registry.register(ModelProfile::reasoning("my-custom-model"));
 
         let profile = registry.get("my-custom-model");
-        assert_eq!(
-            profile.instruction_style,
-            InstructionStyle::ChainOfThought
-        );
+        assert_eq!(profile.instruction_style, InstructionStyle::ChainOfThought);
     }
 
     #[test]

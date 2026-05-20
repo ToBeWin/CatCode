@@ -13,16 +13,16 @@ pub type SessionId = String;
 /// Current state of a session in its lifecycle.
 pub enum SessionState {
     /// Agent is actively running.
-/// [`Running`].
+    /// [`Running`].
     Running,
     /// Agent is paused, waiting for user input.
-/// [`Paused`].
+    /// [`Paused`].
     Paused,
     /// Task completed successfully.
-/// [`Completed`].
+    /// [`Completed`].
     Completed,
     /// Session failed with an error message.
-/// [`Failed`].
+    /// [`Failed`].
     Failed(String),
 }
 

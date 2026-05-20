@@ -84,10 +84,7 @@ impl Tool for GitCommitTool {
                     None => continue,
                 };
                 let mut add_cmd = Command::new("git");
-                add_cmd
-                    .arg("add")
-                    .arg(file)
-                    .current_dir(&repo_path);
+                add_cmd.arg("add").arg(file).current_dir(&repo_path);
                 let output = match add_cmd.output() {
                     Ok(o) => o,
                     Err(e) => {
@@ -106,9 +103,7 @@ impl Tool for GitCommitTool {
             }
         } else {
             let mut add_cmd = Command::new("git");
-            add_cmd
-                .args(["add", "-A"])
-                .current_dir(&repo_path);
+            add_cmd.args(["add", "-A"]).current_dir(&repo_path);
             let output = match add_cmd.output() {
                 Ok(o) => o,
                 Err(e) => {
@@ -144,7 +139,11 @@ impl Tool for GitCommitTool {
             return ToolResult::error(format!(
                 "git commit failed (exit {}): {}",
                 output.status.code().unwrap_or(-1),
-                if stdout.trim().is_empty() { stderr.trim() } else { stdout.trim() },
+                if stdout.trim().is_empty() {
+                    stderr.trim()
+                } else {
+                    stdout.trim()
+                },
             ));
         }
 
@@ -237,9 +236,7 @@ mod tests {
 
         let tool = GitCommitTool;
         let ctx = make_ctx(tmp.path());
-        let result = tool
-            .execute(json!({"message": ""}), &ctx)
-            .await;
+        let result = tool.execute(json!({"message": ""}), &ctx).await;
 
         assert!(result.is_error);
         assert!(result.output.contains("empty"));
@@ -269,9 +266,7 @@ mod tests {
             working_dir: Some(tmp.path().to_path_buf()),
             dry_run: true,
         };
-        let result = tool
-            .execute(json!({"message": "test commit"}), &ctx)
-            .await;
+        let result = tool.execute(json!({"message": "test commit"}), &ctx).await;
 
         assert!(!result.is_error);
         assert!(result.output.contains("dry-run"));
@@ -284,9 +279,7 @@ mod tests {
 
         let tool = GitCommitTool;
         let ctx = make_ctx(tmp.path());
-        let result = tool
-            .execute(json!({"message": "test"}), &ctx)
-            .await;
+        let result = tool.execute(json!({"message": "test"}), &ctx).await;
 
         assert!(result.is_error);
     }

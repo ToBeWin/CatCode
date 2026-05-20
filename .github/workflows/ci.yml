@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Check, lint, and smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check workspace
+        run: cargo check --workspace
+
+      - name: Clippy release-facing crates
+        run: cargo clippy -p catcode-api -p catcode-daemon -p catcode-cli -p catcode-tui --all-targets --all-features -- -D warnings
+
+      - name: Test release-facing crates
+        run: cargo test -p catcode-api -p catcode-daemon -p catcode-cli -p catcode-tui
+
+      - name: Local mock smoke
+        run: scripts/smoke-local.sh
+
+      - name: Daemon API smoke
+        run: cargo test -p catcode-daemon --test api_smoke -- --nocapture

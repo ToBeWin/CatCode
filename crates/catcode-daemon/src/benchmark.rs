@@ -52,7 +52,7 @@ pub struct BenchmarkReport {
 }
 
 impl BenchmarkReport {
-/// Aggregate benchmark results into a report.
+    /// Aggregate benchmark results into a report.
     pub fn from_results(provider_id: &str, model_id: &str, results: Vec<BenchmarkResult>) -> Self {
         let total = results.len();
         let passed = results.iter().filter(|r| r.passed).count();
@@ -84,7 +84,7 @@ impl BenchmarkReport {
         }
     }
 
-/// One-line summary of the benchmark report.
+    /// One-line summary of the benchmark report.
     pub fn summary_line(&self) -> String {
         format!(
             "{}/{}: {}/{} passed ({:.0}%) | avg {}ms | ${:.4} | {}ms avg latency",
@@ -154,7 +154,9 @@ pub fn format_report_table(report: &BenchmarkReport) -> String {
     )];
     lines.push(format!(
         "Pass rate: {}/{} ({:.0}%)",
-        report.passed, report.total_cases, report.pass_rate * 100.0
+        report.passed,
+        report.total_cases,
+        report.pass_rate * 100.0
     ));
     lines.push(format!("Avg latency: {}ms", report.avg_latency_ms));
     lines.push(format!(

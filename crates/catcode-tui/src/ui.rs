@@ -143,9 +143,7 @@ fn render_top_bar(f: &mut Frame, app: &App, area: Rect) {
 
     let tokens = format!(
         " {}in {}out ${:.4}",
-        app.token_display.input_tokens,
-        app.token_display.output_tokens,
-        app.token_display.cost_usd,
+        app.token_display.input_tokens, app.token_display.output_tokens, app.token_display.cost_usd,
     );
 
     let mode_label = app.agent_mode.label();
@@ -156,7 +154,10 @@ fn render_top_bar(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let spans = vec![
-        Span::styled(" ◆ ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " ◆ ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(
             format!(" {} ", mode_label),
             Style::default()
@@ -198,10 +199,7 @@ fn render_main_area(f: &mut Frame, app: &App, area: Rect) {
     } else {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(20),
-                Constraint::Min(40),
-            ])
+            .constraints([Constraint::Length(20), Constraint::Min(40)])
             .split(area);
 
         render_sessions_panel(f, app, chunks[0]);
@@ -228,7 +226,12 @@ fn render_cat_overlay(f: &mut Frame, app: &App, area: Rect) {
     let x = area.x + area.width.saturating_sub(cat_width + 2);
     let y = area.y + 1;
 
-    let overlay_area = Rect { x, y, width: cat_width + 2, height: cat_height + 1 };
+    let overlay_area = Rect {
+        x,
+        y,
+        width: cat_width + 2,
+        height: cat_height + 1,
+    };
 
     f.render_widget(Clear, overlay_area);
 
@@ -253,8 +256,7 @@ fn render_cat_overlay(f: &mut Frame, app: &App, area: Rect) {
         .map(|line| Line::from(Span::styled(*line, Style::default().fg(cat_color))))
         .collect();
 
-    let paragraph = Paragraph::new(lines)
-        .style(Style::default().bg(Color::Black));
+    let paragraph = Paragraph::new(lines).style(Style::default().bg(Color::Black));
 
     f.render_widget(paragraph, inner);
 }
@@ -345,21 +347,13 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
         .flat_map(|msg| {
             let prefix_style: Style = match msg.role {
                 MessageRole::User => Style::default().fg(USER_MSG).add_modifier(Modifier::BOLD),
-                MessageRole::Assistant => {
-                    Style::default()
-                        .fg(ASSISTANT_MSG)
-                        .add_modifier(Modifier::BOLD)
-                }
-                MessageRole::System => {
-                    Style::default()
-                        .fg(SYSTEM_MSG)
-                        .add_modifier(Modifier::ITALIC)
-                }
-                MessageRole::Tool => {
-                    Style::default()
-                        .fg(TOOL_MSG)
-                        .add_modifier(Modifier::ITALIC)
-                }
+                MessageRole::Assistant => Style::default()
+                    .fg(ASSISTANT_MSG)
+                    .add_modifier(Modifier::BOLD),
+                MessageRole::System => Style::default()
+                    .fg(SYSTEM_MSG)
+                    .add_modifier(Modifier::ITALIC),
+                MessageRole::Tool => Style::default().fg(TOOL_MSG).add_modifier(Modifier::ITALIC),
             };
 
             let role_color = match msg.role {
@@ -416,7 +410,8 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
     let scroll = if app.auto_scroll {
         total_lines.saturating_sub(inner_height)
     } else {
-        app.scroll_offset.min(total_lines.saturating_sub(inner_height))
+        app.scroll_offset
+            .min(total_lines.saturating_sub(inner_height))
     };
 
     let active_session = app.active_session();
@@ -451,15 +446,9 @@ fn render_input(f: &mut Frame, app: &App, area: Rect) {
     let (title, border_color) = match app.input_mode {
         InputMode::Normal => {
             if is_disabled {
-                (
-                    format!(" Input [{}] (waiting...) ", mode_tag),
-                    DIM,
-                )
+                (format!(" Input [{}] (waiting...) ", mode_tag), DIM)
             } else {
-                (
-                    format!(" Input [{}] ", mode_tag),
-                    ACCENT,
-                )
+                (format!(" Input [{}] ", mode_tag), ACCENT)
             }
         }
         InputMode::Command => (" Command ".to_string(), WARN),
@@ -545,14 +534,9 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
         Color::Black
     };
 
-    let fg_color = if app.agent_busy {
-        ACCENT
-    } else {
-        DIM
-    };
+    let fg_color = if app.agent_busy { ACCENT } else { DIM };
 
-    let paragraph = Paragraph::new(status_text)
-        .style(Style::default().fg(fg_color).bg(bg));
+    let paragraph = Paragraph::new(status_text).style(Style::default().fg(fg_color).bg(bg));
 
     f.render_widget(paragraph, area);
 }
@@ -595,7 +579,6 @@ mod tests {
 
     #[test]
     fn test_command_suggestions_filtering() {
-        assert!(!COMMANDS.is_empty());
         assert!(COMMANDS.iter().any(|(cmd, _)| cmd.starts_with("new")));
         assert!(COMMANDS.iter().any(|(cmd, _)| cmd.starts_with("quit")));
     }

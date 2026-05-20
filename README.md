@@ -1,10 +1,10 @@
 # CatCode
 
-**Model-agnostic open-source AI coding agent** — Rust, TUI-first, daemon architecture, 849 tests.
+**Model-agnostic open-source AI coding agent** — Rust, TUI-first, daemon architecture.
 
 ## Overview
 
-CatCode is an AI coding agent that works with **11 model providers** through a unified interface. It uses harness engineering to compensate for model capability differences, rather than relying on the model itself.
+CatCode is an AI coding agent that works with **10 real model providers plus a mock provider** through a unified runtime interface. It uses middleware and context engineering to compensate for model capability differences, rather than relying on the model itself.
 
 ## Quick Start (30 seconds)
 
@@ -31,21 +31,32 @@ export DEEPSEEK_API_KEY="sk-your-key-here"
 
 Type a message and press Enter.
 
+Run the same local gates used by CI:
+
+```bash
+bash install.sh --check
+cargo check --workspace
+cargo clippy -p catcode-api -p catcode-daemon -p catcode-cli -p catcode-tui --all-targets --all-features -- -D warnings
+cargo test -p catcode-api -p catcode-daemon -p catcode-cli -p catcode-tui
+scripts/smoke-local.sh
+cargo test -p catcode-daemon --test api_smoke -- --nocapture
+```
+
 ---
 
 ### Key Features
 
-- **11 Model Providers** — Anthropic, DeepSeek, OpenAI, Qwen, Google Gemini, MiniMax, GLM, Ollama, OpenRouter, Volcengine + Mock
+- **10 Real Providers + Mock** — Anthropic, DeepSeek, OpenAI, Qwen, Google Gemini, MiniMax, GLM, Ollama, OpenRouter, Volcengine + Mock
 - **13 Built-in Tools** — read, write, patch, git, bash, search, web_fetch, code_analysis, delete, glob, list_dir
-- **Harness Engineering** — 8-layer middleware: circuit breaker, retry, timeout, loop detection, output validation, model routing, sandbox gate, token usage tracking
+- **Harness Engineering** — middleware for retry, timeout, loop detection, output validation, sandbox gate, and token usage tracking
 - **Thinking Mode** — Real-time reasoning/chain-of-thought display in TUI (DeepSeek reasoning_content)
 - **Code Review** — Pattern-based (8 detectors) + LLM-deep review with structured findings
 - **Security Check** — Secret detection (11 regex patterns), code injection scan, dependency CVE check, config audit
 - **SWE-Bench Harness** — Full evaluation framework: parallel instance execution, git lifecycle, test runner, detailed reporting
 - **Context Engineering** — 3-layer context (Permanent/Session/Working), smart compression, token budget management, prompt cache optimization
-- **Sandbox Isolation** — Native + Docker backends, operation safety classification (Safe/Sensitive/Dangerous), approval gates
+- **Sandbox / Safety Controls** — NativeSandbox only: path checks, timeout/output truncation, operation safety classification (Safe/Sensitive/Dangerous), approval gates
 - **Plan/Act/Auto/Goal Modes** — Plan mode for analysis, Act for execution, Auto for planned execution, Goal for autonomous task pursuit
-- **Extensible** — Skills (TOML), Plugins (Rust/WASM), MCP (Model Context Protocol, JSON-RPC over stdio)
+- **Extensible Core** — Skills/plugins/MCP modules exist, with MCP and WASM support still early-stage
 - **Daemon Architecture** — Background multi-agent concurrency, REST/SSE/WebSocket API, SQLite persistence, audit log
 - **Cat Mascot** — ASCII art cat with 5 state-based animations
 - **Benchmark** — Built-in evaluation for provider+model combinations
@@ -74,26 +85,26 @@ Type a message and press Enter.
      ▼      ▼      ▼      ▼      ▼      ▼      ▼
   catcode  catcode  catcode catcode catcode catcode catcode
  -core    -provider -middleware -context -tools  -sandbox -plugin
- (no IO)  11provs  8-layer   3-layer  13tools  Docker   Skill/
-          +Mock    safety    +budget          +Native  MCP/WASM
+ (no IO)  10provs  safety    3-layer  13tools  Native   Skill/
+          +Mock    stack     +budget          only     MCP/WASM
 ```
 
 ## Crates
 
 | Crate | Description | Lines | Tests |
 |-------|-------------|-------|-------|
-| `catcode-core` | Core types, traits, errors (zero IO) | 1,436 | 42 |
-| `catcode-provider` | 11 model providers + Mock | 6,162 | 136 |
+| `catcode-core` | Core types, traits, errors (zero IO) | 1,436 | 133 |
+| `catcode-provider` | 10 real providers + Mock | 6,162 | 136 |
 | `catcode-middleware` | 8-layer safety middleware chain | 2,918 | 86 |
-| `catcode-context` | Context engineering, compression, budget | 2,694 | 88 |
-| `catcode-daemon` | Agent loop, sessions, persistence, code_review, security_check, swe_bench | ~4,600 | 186 |
-| `catcode-tools` | 13 built-in tools | 2,555 | 102 |
-| `catcode-sandbox` | Native + Docker sandbox, classification, approvals | 963 | 39 |
+| `catcode-context` | Context engineering, compression, budget | 2,694 | 105 |
+| `catcode-daemon` | Agent loop, sessions, persistence, code_review, security_check, swe_bench | ~4,600 | 224 |
+| `catcode-tools` | 13 built-in tools | 2,555 | 120 |
+| `catcode-sandbox` | Native sandbox, classification, approvals | 963 | 31 |
 | `catcode-plugin` | Skills (TOML), Plugins, MCP client, WASM sandbox | 2,123 | 59 |
-| `catcode-api` | axum REST + SSE + WebSocket API + Auth | 747 | 13 |
+| `catcode-api` | axum REST + SSE + WebSocket API + Auth | 747 | 50 |
 | `catcode-tui` | ratatui TUI with cat mascot, thinking mode | 2,961 | 94 |
-| `catcode-cli` | Non-interactive CLI binary | 333 | — |
-| **Total** | **11 crates** | **33,562** | **849** |
+| `catcode-cli` | Non-interactive CLI binary | 333 | 0 |
+| **Total** | **11 crates** | **33,562** | Run `cargo test --workspace -- --list` for current count |
 
 ## Built-in Tools
 
@@ -218,9 +229,7 @@ harness.save_results(&report, "/tmp/report").await?;
 | `/goal status\|pause\|resume\|clear` | Manage goals |
 | `/benchmark list\|results\|clear` | Benchmark evaluation |
 | `/cat on\|off` | Toggle cat mascot |
-| `/review <file\|diff>` | Run code review |
-| `/security <path>` | Run security scan |
-| `/thinking on\|off` | Toggle thinking mode panel |
+| `/help` | Show commands |
 | `/quit` | Exit CatCode |
 
 ## CLI Subcommands
@@ -229,9 +238,15 @@ harness.save_results(&report, "/tmp/report").await?;
 catcode version              # Show version
 catcode help                 # Show help
 catcode daemon start         # Start daemon process
+catcode daemon stop          # Stop daemon started by CLI
 catcode daemon status        # Check daemon status
+catcode daemon restart       # Restart daemon process
 catcode session list         # List sessions
 catcode session create <n>   # Create session
+catcode session audit <id>   # Show session audit log
+catcode session messages <id> # Show persisted message history
+catcode session usage <id>   # Show aggregated token usage
+catcode session recovery <id> # Show recovery plan
 catcode run <message>        # Non-interactive agent run
 ```
 
@@ -246,6 +261,10 @@ GET    /api/v1/sessions          # List sessions
 POST   /api/v1/sessions          # Create session
 GET    /api/v1/sessions/:id      # Get session
 DELETE /api/v1/sessions/:id      # Delete session
+GET    /api/v1/sessions/:id/audit    # List audit log entries
+GET    /api/v1/sessions/:id/messages # List persisted messages
+GET    /api/v1/sessions/:id/recovery # Get recovery plan
+GET    /api/v1/sessions/:id/usage    # Get token usage summary
 POST   /api/v1/sessions/:id/message  # Send message
 POST   /api/v1/sessions/:id/pause    # Pause session
 POST   /api/v1/sessions/:id/resume   # Resume session
@@ -256,7 +275,7 @@ GET    /api/v1/ws                # WebSocket
 
 ## Mobile / IM 集成
 
-CatCode 通过 **cc-connect** 桥接到即时通讯平台，无需开发独立 App，无需公网服务器。
+CatCode 提供 **cc-connect** 适配脚本和配置示例；真正的 IM 平台接入由外部 cc-connect 负责。无需为 CatCode 开发独立 App，也通常不需要公网服务器。
 
 ```
 钉钉 / 飞书 / 企微 / Telegram / Discord / Slack / QQ / LINE

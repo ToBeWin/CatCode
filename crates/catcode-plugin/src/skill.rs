@@ -73,25 +73,25 @@ pub struct SkillHooks {
 #[derive(Debug, thiserror::Error)]
 pub enum SkillError {
     #[error("IO error reading skill {path}: {source}")]
-/// [`IoError`].
+    /// [`IoError`].
     IoError {
         path: PathBuf,
         source: std::io::Error,
     },
 
     #[error("TOML parse error in {path}: {source}")]
-/// [`ParseError`].
+    /// [`ParseError`].
     ParseError {
         path: PathBuf,
         source: toml::de::Error,
     },
 
     #[error("Invalid skill '{name}': {reason}")]
-/// [`Invalid`].
+    /// [`Invalid`].
     Invalid { name: String, reason: String },
 
     #[error("Skill not found: {0}")]
-/// [`NotFound`].
+    /// [`NotFound`].
     NotFound(String),
 }
 
@@ -162,7 +162,7 @@ pub struct SkillRegistry {
 }
 
 impl SkillRegistry {
-/// Create an empty skill registry.
+    /// Create an empty skill registry.
     pub fn new() -> Self {
         Self {
             skills: HashMap::new(),

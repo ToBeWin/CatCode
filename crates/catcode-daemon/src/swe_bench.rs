@@ -12,13 +12,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
 use catcode_context::{ContextStack, TokenBudget};
-use catcode_core::provider::Provider;
 use catcode_core::TokenUsage;
+use catcode_core::provider::Provider;
 use catcode_middleware::MiddlewareChain;
 use catcode_tools::ToolRegistry;
 
@@ -110,8 +110,7 @@ impl SweBenchResult {
 }
 
 /// Test outcomes for a SWE-Bench instance.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 /// Outcome of SWE-Bench test execution for an instance.
 pub struct TestResults {
     pub fail_to_pass: Vec<String>,
@@ -127,7 +126,6 @@ impl TestResults {
         self.fail_to_fail.is_empty() && self.pass_to_fail.is_empty()
     }
 }
-
 
 /// Aggregated SWE-Bench evaluation report.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,10 +171,7 @@ impl SweBenchReport {
             0.0
         };
         let total_cost_usd = results.iter().map(|r| r.cost_usd).sum();
-        let errors: Vec<String> = results
-            .iter()
-            .filter_map(|r| r.error.clone())
-            .collect();
+        let errors: Vec<String> = results.iter().filter_map(|r| r.error.clone()).collect();
 
         Self {
             config: config.clone(),
@@ -297,10 +292,7 @@ impl SweBenchHarness {
     }
 
     /// Evaluate a single SWE-Bench instance.
-    pub async fn evaluate_instance(
-        &self,
-        instance: &SweBenchInstance,
-    ) -> Result<SweBenchResult> {
+    pub async fn evaluate_instance(&self, instance: &SweBenchInstance) -> Result<SweBenchResult> {
         let start = Instant::now();
         let mut steps: Vec<String> = Vec::new();
 
@@ -325,19 +317,29 @@ impl SweBenchHarness {
                 start.elapsed().as_millis() as u64,
             ));
         }
-        steps.push(format!("Cloned {} at {}", instance.repo, instance.base_commit));
+        steps.push(format!(
+            "Cloned {} at {}",
+            instance.repo, instance.base_commit
+        ));
 
         // 3. Checkout base commit and create a branch
         self.git_checkout(&repo_dir, &instance.base_commit).await?;
         self.git_create_branch(&repo_dir, "catcode-fix").await?;
-        steps.push(format!("Checked out {} and created branch", instance.base_commit));
+        steps.push(format!(
+            "Checked out {} and created branch",
+            instance.base_commit
+        ));
 
         // 4. Run the agent on the issue
         let agent_result = self.run_agent(instance, &repo_dir).await;
         let (agent_turns, token_usage, cost_usd) = match &agent_result {
             Ok(r) => {
                 steps.push(format!("Agent completed in {} turns", r.turns_used));
-                (r.turns_used, r.total_usage.clone(), estimate_cost(&r.total_usage))
+                (
+                    r.turns_used,
+                    r.total_usage.clone(),
+                    estimate_cost(&r.total_usage),
+                )
             }
             Err(e) => {
                 warn!("Agent error for {}: {}", instance.id, e);
@@ -368,11 +370,15 @@ impl SweBenchHarness {
                 agent_output: steps,
             });
         }
-        steps.push(format!("Generated patch ({} lines)", generated_patch.lines().count()));
+        steps.push(format!(
+            "Generated patch ({} lines)",
+            generated_patch.lines().count()
+        ));
 
         // 6. Apply the test patch
         if !instance.test_patch.is_empty() {
-            self.git_apply_patch(&repo_dir, &instance.test_patch).await?;
+            self.git_apply_patch(&repo_dir, &instance.test_patch)
+                .await?;
             steps.push("Applied evaluation test patch".to_string());
         }
 
@@ -435,17 +441,13 @@ impl SweBenchHarness {
             0.80,
         );
 
-        let model_id = self
-            .config
-            .model
-            .clone()
-            .unwrap_or_else(|| {
-                self.provider
-                    .supported_models()
-                    .first()
-                    .map(|m| m.id.clone())
-                    .unwrap_or_else(|| "default".to_string())
-            });
+        let model_id = self.config.model.clone().unwrap_or_else(|| {
+            self.provider
+                .supported_models()
+                .first()
+                .map(|m| m.id.clone())
+                .unwrap_or_else(|| "default".to_string())
+        });
 
         let mut agent = AgentLoop::new(
             self.provider.clone(),
@@ -463,7 +465,10 @@ impl SweBenchHarness {
             instance.issue.clone()
         };
 
-        agent.run(&issue_text, repo_dir).await.map_err(|e| anyhow::anyhow!("{}", e))
+        agent
+            .run(&issue_text, repo_dir)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))
     }
 
     /// Clone a repository at the specified path.
@@ -583,11 +588,7 @@ impl SweBenchHarness {
     }
 
     /// Run tests for the instance and classify outcomes.
-    async fn run_tests(
-        &self,
-        instance: &SweBenchInstance,
-        repo_dir: &Path,
-    ) -> TestResults {
+    async fn run_tests(&self, instance: &SweBenchInstance, repo_dir: &Path) -> TestResults {
         let mut fail_to_pass = Vec::new();
         let mut pass_to_pass = Vec::new();
         let mut fail_to_fail = Vec::new();
@@ -665,14 +666,13 @@ impl SweBenchHarness {
                     Ok(Ok(r)) => r,
                     Ok(Err(e)) => {
                         error!("Instance {} failed: {}", instance.id, e);
-                        SweBenchResult::errored(
-                            &instance,
-                            format!("Evaluation failed: {}", e),
-                            0,
-                        )
+                        SweBenchResult::errored(&instance, format!("Evaluation failed: {}", e), 0)
                     }
                     Err(_) => {
-                        warn!("Instance {} timed out after {}s", instance.id, config.instance_timeout_secs);
+                        warn!(
+                            "Instance {} timed out after {}s",
+                            instance.id, config.instance_timeout_secs
+                        );
                         SweBenchResult::errored(
                             &instance,
                             format!("Timed out after {}s", config.instance_timeout_secs),
@@ -820,13 +820,20 @@ pub fn format_summary(report: &SweBenchReport) -> String {
         "╚══════════════════════════════════════════════╝".to_string(),
         String::new(),
         format!("Total instances:  {}", report.total_instances),
-        format!("Resolved:        {} ({:.1}%)", report.resolved, report.resolve_rate * 100.0),
+        format!(
+            "Resolved:        {} ({:.1}%)",
+            report.resolved,
+            report.resolve_rate * 100.0
+        ),
         format!("Unresolved:      {}", report.unresolved),
         format!("Avg turns:       {:.1}", report.avg_turns),
         format!("Avg duration:    {:.0}ms", report.avg_duration_ms),
         format!("Total cost:      ${:.4}", report.total_cost_usd),
         String::new(),
-        format!("Period:          {} → {}", report.start_time, report.end_time),
+        format!(
+            "Period:          {} → {}",
+            report.start_time, report.end_time
+        ),
     ];
 
     if !report.errors.is_empty() {
@@ -885,13 +892,17 @@ pub fn format_summary(report: &SweBenchReport) -> String {
 
 /// Save report results to a JSON file and summary to a markdown file.
 pub fn save_results(report: &SweBenchReport, output_dir: &Path) -> Result<()> {
-    std::fs::create_dir_all(output_dir)
-        .with_context(|| format!("Failed to create output directory: {}", output_dir.display()))?;
+    std::fs::create_dir_all(output_dir).with_context(|| {
+        format!(
+            "Failed to create output directory: {}",
+            output_dir.display()
+        )
+    })?;
 
     // Full results as JSON
     let json_path = output_dir.join("results.json");
-    let json = serde_json::to_string_pretty(report)
-        .context("Failed to serialize report to JSON")?;
+    let json =
+        serde_json::to_string_pretty(report).context("Failed to serialize report to JSON")?;
     std::fs::write(&json_path, &json)
         .with_context(|| format!("Failed to write results JSON: {}", json_path.display()))?;
 
@@ -907,9 +918,8 @@ pub fn save_results(report: &SweBenchReport, output_dir: &Path) -> Result<()> {
     for result in &report.results {
         if !result.generated_patch.is_empty() {
             let patch_path = patches_dir.join(format!("{}.patch", result.instance_id));
-            std::fs::write(&patch_path, &result.generated_patch).with_context(|| {
-                format!("Failed to write patch for {}", result.instance_id)
-            })?;
+            std::fs::write(&patch_path, &result.generated_patch)
+                .with_context(|| format!("Failed to write patch for {}", result.instance_id))?;
         }
     }
 
@@ -1139,7 +1149,10 @@ mod tests {
             },
         ];
         let report = SweBenchReport::from_results(
-            &config, results, "2025-01-01T00:00:00Z", "2025-01-01T01:00:00Z",
+            &config,
+            results,
+            "2025-01-01T00:00:00Z",
+            "2025-01-01T01:00:00Z",
         );
         assert_eq!(report.total_instances, 2);
         assert_eq!(report.resolved, 2);
@@ -1179,9 +1192,7 @@ mod tests {
                 ..make_base_result("repo/r2")
             },
         ];
-        let report = SweBenchReport::from_results(
-            &config, results, "s", "e",
-        );
+        let report = SweBenchReport::from_results(&config, results, "s", "e");
         assert_eq!(report.total_instances, 3);
         assert_eq!(report.resolved, 2);
         assert_eq!(report.unresolved, 1);
@@ -1195,9 +1206,7 @@ mod tests {
     #[test]
     fn test_report_aggregation_empty() {
         let config = SweBenchConfig::default();
-        let report = SweBenchReport::from_results(
-            &config, vec![], "s", "e",
-        );
+        let report = SweBenchReport::from_results(&config, vec![], "s", "e");
         assert_eq!(report.total_instances, 0);
         assert_eq!(report.resolved, 0);
         assert_eq!(report.unresolved, 0);
@@ -1365,7 +1374,12 @@ mod tests {
         ]"#).unwrap();
         let result = load_dataset(&path);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("empty base_commit"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("empty base_commit")
+        );
     }
 
     // ---- Formatting ----
@@ -1378,7 +1392,12 @@ mod tests {
             resolved: true,
             ..make_base_result("repo/test")
         }];
-        let report = SweBenchReport::from_results(&config, results, "2025-01-01T00:00:00Z", "2025-01-01T01:00:00Z");
+        let report = SweBenchReport::from_results(
+            &config,
+            results,
+            "2025-01-01T00:00:00Z",
+            "2025-01-01T01:00:00Z",
+        );
         let summary = format_summary(&report);
         assert!(summary.contains("SWE-Bench Evaluation Report"));
         assert!(summary.contains("Total instances:  1"));
@@ -1529,7 +1548,11 @@ mod tests {
             .output();
 
         // Create an initial file and commit
-        std::fs::write(repo_path.join("hello.py"), "def greet():\n    return 'Hello, World!'\n").unwrap();
+        std::fs::write(
+            repo_path.join("hello.py"),
+            "def greet():\n    return 'Hello, World!'\n",
+        )
+        .unwrap();
         let output = std::process::Command::new("git")
             .args(["add", "hello.py"])
             .current_dir(&repo_path)
@@ -1553,7 +1576,11 @@ mod tests {
         let commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
         // Modify the file
-        std::fs::write(repo_path.join("hello.py"), "def greet():\n    return 'Hello, SWE-Bench!'\n").unwrap();
+        std::fs::write(
+            repo_path.join("hello.py"),
+            "def greet():\n    return 'Hello, SWE-Bench!'\n",
+        )
+        .unwrap();
 
         // Run git diff
         let output = std::process::Command::new("git")
@@ -1613,10 +1640,12 @@ mod tests {
         let result = harness.evaluate_instance(&instance).await;
 
         // Should fail because repo doesn't exist
-        assert!(result.is_err() || {
-            let r = result.as_ref().unwrap();
-            r.error.is_some()
-        });
+        assert!(
+            result.is_err() || {
+                let r = result.as_ref().unwrap();
+                r.error.is_some()
+            }
+        );
     }
 
     #[tokio::test]
@@ -1650,7 +1679,11 @@ mod tests {
             created_at: String::new(),
         };
 
-        let results = vec![SweBenchResult::errored(&instance, "test error".to_string(), 500)];
+        let results = vec![SweBenchResult::errored(
+            &instance,
+            "test error".to_string(),
+            500,
+        )];
         let report = SweBenchReport::from_results(&config, results, "s", "e");
         assert_eq!(report.total_instances, 1);
         assert_eq!(report.resolved, 0);

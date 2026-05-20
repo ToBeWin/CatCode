@@ -36,12 +36,12 @@ impl AgentContext {
         }
     }
 
-/// Add message.
+    /// Add message.
     pub fn add_message(&mut self, message: Message) {
         self.messages.push(message);
     }
 
-/// Add tool output.
+    /// Add tool output.
     pub fn add_tool_output(&mut self, call_id: String, tool_name: String, result: ToolResult) {
         self.tool_outputs.push_back(ToolOutput {
             call_id,
@@ -50,24 +50,24 @@ impl AgentContext {
         });
     }
 
-/// Record usage.
+    /// Record usage.
     pub fn record_usage(&mut self, usage: TokenUsage) {
         self.usage_history.push(usage);
     }
 
-/// Total usage.
+    /// Total usage.
     pub fn total_usage(&self) -> TokenUsage {
         self.usage_history
             .iter()
             .fold(TokenUsage::default(), |acc, u| acc + u.clone())
     }
 
-/// Set the metadata.
+    /// Set the metadata.
     pub fn set_metadata(&mut self, key: impl Into<String>, value: serde_json::Value) {
         self.metadata.insert(key.into(), value);
     }
 
-/// Get the metadata.
+    /// Get the metadata.
     pub fn get_metadata(&self, key: &str) -> Option<&serde_json::Value> {
         self.metadata.get(key)
     }
@@ -108,7 +108,7 @@ impl<'a> ToolCallNext<'a> {
         }
     }
 
-/// Execute.
+    /// Execute.
     pub async fn execute(&self, call: &ToolCall) -> ToolResult {
         (self.inner)(call).await
     }

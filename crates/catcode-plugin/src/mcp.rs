@@ -59,41 +59,38 @@ pub struct McpToolResult {
 /// Content block types from MCP tool responses.
 pub enum McpContentBlock {
     #[serde(rename = "text")]
-/// [`Text`].
+    /// [`Text`].
     Text { text: String },
     #[serde(rename = "image")]
-/// [`Image`].
-    Image {
-        data: String,
-        mime_type: String,
-    },
+    /// [`Image`].
+    Image { data: String, mime_type: String },
 }
 
 /// Errors from MCP operations.
 #[derive(Debug, thiserror::Error)]
 pub enum McpError {
     #[error("MCP server not found: {0}")]
-/// [`ServerNotFound`].
+    /// [`ServerNotFound`].
     ServerNotFound(String),
 
     #[error("MCP server not running: {0}")]
-/// [`ServerNotRunning`].
+    /// [`ServerNotRunning`].
     ServerNotRunning(String),
 
     #[error("MCP protocol error: {0}")]
-/// [`ProtocolError`].
+    /// [`ProtocolError`].
     ProtocolError(String),
 
     #[error("MCP tool not found: {0}")]
-/// [`ToolNotFound`].
+    /// [`ToolNotFound`].
     ToolNotFound(String),
 
     #[error("MCP connection failed: {0}")]
-/// [`ConnectionFailed`].
+    /// [`ConnectionFailed`].
     ConnectionFailed(String),
 
     #[error("IO error: {0}")]
-/// [`IoError`].
+    /// [`IoError`].
     IoError(#[from] std::io::Error),
 }
 
@@ -107,7 +104,7 @@ pub struct McpConnection {
 }
 
 impl McpConnection {
-/// Create a new MCP server configuration.
+    /// Create a new MCP server configuration.
     pub fn new(config: McpServerConfig) -> Self {
         Self {
             config,
@@ -189,7 +186,7 @@ pub struct McpRegistry {
 }
 
 impl McpRegistry {
-/// Create an empty MCP registry.
+    /// Create an empty MCP registry.
     pub fn new() -> Self {
         Self {
             connections: Vec::new(),
@@ -372,10 +369,7 @@ mod tests {
         let tools = conn.list_tools().await.unwrap();
         assert!(tools.is_empty());
 
-        let result = conn
-            .call_tool("test", serde_json::json!({}))
-            .await
-            .unwrap();
+        let result = conn.call_tool("test", serde_json::json!({})).await.unwrap();
         assert!(!result.is_error);
 
         conn.disconnect().await.unwrap();

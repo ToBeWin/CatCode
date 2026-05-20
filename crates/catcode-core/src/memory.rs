@@ -7,13 +7,13 @@ use std::fmt;
 #[serde(rename_all = "lowercase")]
 /// [`MemoryType`]
 pub enum MemoryType {
-/// [`User`].
+    /// [`User`].
     User,
-/// [`Feedback`].
+    /// [`Feedback`].
     Feedback,
-/// [`Project`].
+    /// [`Project`].
     Project,
-/// [`Reference`].
+    /// [`Reference`].
     Reference,
 }
 
@@ -45,15 +45,15 @@ pub struct MemoryEntry {
 #[serde(rename_all = "lowercase")]
 /// [`FactCategory`]
 pub enum FactCategory {
-/// [`Preference`].
+    /// [`Preference`].
     Preference,
-/// [`Knowledge`].
+    /// [`Knowledge`].
     Knowledge,
-/// [`Context`].
+    /// [`Context`].
     Context,
-/// [`Behavior`].
+    /// [`Behavior`].
     Behavior,
-/// [`Goal`].
+    /// [`Goal`].
     Goal,
 }
 
@@ -147,10 +147,9 @@ mod tests {
     fn test_fact_category_serialization() {
         let json = serde_json::to_string(&FactCategory::Goal).unwrap();
         assert_eq!(json, "\"goal\"");
-        let categories: Vec<FactCategory> = serde_json::from_str(
-            r#"["preference","knowledge","context","behavior","goal"]"#,
-        )
-        .unwrap();
+        let categories: Vec<FactCategory> =
+            serde_json::from_str(r#"["preference","knowledge","context","behavior","goal"]"#)
+                .unwrap();
         assert_eq!(categories.len(), 5);
     }
 

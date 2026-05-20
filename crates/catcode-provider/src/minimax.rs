@@ -248,7 +248,7 @@ pub struct MiniMaxProvider {
 }
 
 impl MiniMaxProvider {
-/// Create a new MiniMax provider.
+    /// Create a new MiniMax provider.
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,

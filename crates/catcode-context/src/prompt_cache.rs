@@ -118,9 +118,10 @@ impl PromptCacheOptimizer {
                 .cacheable_regions
                 .iter()
                 .filter_map(|r| match r.region_type {
-                    CacheRegionType::EarlyMessages { start_index, end_index } => {
-                        Some((start_index, end_index))
-                    }
+                    CacheRegionType::EarlyMessages {
+                        start_index,
+                        end_index,
+                    } => Some((start_index, end_index)),
                     _ => None,
                 })
                 .collect(),
@@ -134,11 +135,14 @@ impl PromptCacheOptimizer {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheRegionType {
     /// System prompt — most stable, highest cache confidence.
-/// [`SystemPrompt`].
+    /// [`SystemPrompt`].
     SystemPrompt,
     /// Early conversation messages — moderately stable.
-/// [`EarlyMessages`].
-    EarlyMessages { start_index: usize, end_index: usize },
+    /// [`EarlyMessages`].
+    EarlyMessages {
+        start_index: usize,
+        end_index: usize,
+    },
 }
 
 /// A region of content that can be cached.
@@ -217,13 +221,13 @@ impl CacheStats {
         self.cost_saved_usd += (tokens_saved as f64 / 1_000_000.0) * cost_per_mtok;
     }
 
-/// Record miss.
+    /// Record miss.
     pub fn record_miss(&mut self) {
         self.total_requests += 1;
         self.cache_misses += 1;
     }
 
-/// Hit rate.
+    /// Hit rate.
     pub fn hit_rate(&self) -> f64 {
         if self.total_requests == 0 {
             0.0
@@ -270,10 +274,12 @@ mod tests {
         let analysis = optimizer.analyze(&request);
 
         // Small system prompt doesn't meet minimum threshold
-        assert!(analysis
-            .cacheable_regions
-            .iter()
-            .all(|r| r.region_type != CacheRegionType::SystemPrompt));
+        assert!(
+            analysis
+                .cacheable_regions
+                .iter()
+                .all(|r| r.region_type != CacheRegionType::SystemPrompt)
+        );
     }
 
     #[test]
@@ -320,19 +326,18 @@ mod tests {
         let optimizer = PromptCacheOptimizer::new();
         let analysis = optimizer.analyze(&request);
 
-        assert!(analysis
-            .cacheable_regions
-            .iter()
-            .all(|r| r.region_type != CacheRegionType::SystemPrompt));
+        assert!(
+            analysis
+                .cacheable_regions
+                .iter()
+                .all(|r| r.region_type != CacheRegionType::SystemPrompt)
+        );
     }
 
     #[test]
     fn test_cache_hit_ratio() {
         let system = "x".repeat(20000); // ~5000 tokens
-        let request = make_request(
-            Some(&system),
-            vec![Message::user("short question")],
-        );
+        let request = make_request(Some(&system), vec![Message::user("short question")]);
 
         let optimizer = PromptCacheOptimizer::new();
         let analysis = optimizer.analyze(&request);
@@ -384,9 +389,11 @@ mod tests {
 
         let analysis = optimizer.analyze(&request);
         // System prompt not cached (disabled)
-        assert!(analysis
-            .cacheable_regions
-            .iter()
-            .all(|r| r.region_type != CacheRegionType::SystemPrompt));
+        assert!(
+            analysis
+                .cacheable_regions
+                .iter()
+                .all(|r| r.region_type != CacheRegionType::SystemPrompt)
+        );
     }
 }

@@ -1,21 +1,21 @@
 use async_trait::async_trait;
 use catcode_core::middleware::{AgentContext, Middleware, ToolCallNext};
 use catcode_core::tool::{ToolCall, ToolResult};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 
 /// Circuit Breaker states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CircuitState {
     /// Normal operation — requests pass through.
-/// [`Closed`].
+    /// [`Closed`].
     Closed,
     /// Too many failures — requests are blocked immediately.
-/// [`Open`].
+    /// [`Open`].
     Open,
     /// Probing — a limited number of requests pass through to test recovery.
-/// [`HalfOpen`].
+    /// [`HalfOpen`].
     HalfOpen,
 }
 
@@ -38,7 +38,11 @@ pub struct CircuitBreakerMiddleware {
 }
 
 impl CircuitBreakerMiddleware {
-    pub fn new(failure_threshold: u32, recovery_timeout_secs: u64, half_open_max_calls: u32) -> Self {
+    pub fn new(
+        failure_threshold: u32,
+        recovery_timeout_secs: u64,
+        half_open_max_calls: u32,
+    ) -> Self {
         Self {
             failure_threshold,
             recovery_timeout_secs,
@@ -209,9 +213,8 @@ mod tests {
         let mut ctx = AgentContext::new("test");
         let call = make_call("tool");
 
-        let tool_fn: ToolCallNext = ToolCallNext::new(|_call| {
-            Box::pin(async { ToolResult::success("ok") })
-        });
+        let tool_fn: ToolCallNext =
+            ToolCallNext::new(|_call| Box::pin(async { ToolResult::success("ok") }));
 
         let result = cb.wrap_tool_call(&mut ctx, &call, tool_fn).await;
         assert!(!result.is_error);
@@ -226,9 +229,8 @@ mod tests {
 
         // Fail 3 times to open the circuit
         for _ in 0..3 {
-            let tool_fn: ToolCallNext = ToolCallNext::new(|_call| {
-                Box::pin(async { ToolResult::error("fail") })
-            });
+            let tool_fn: ToolCallNext =
+                ToolCallNext::new(|_call| Box::pin(async { ToolResult::error("fail") }));
             cb.wrap_tool_call(&mut ctx, &call, tool_fn).await;
         }
 
@@ -243,18 +245,20 @@ mod tests {
 
         // Open the circuit
         for _ in 0..2 {
-            let tool_fn: ToolCallNext = ToolCallNext::new(|_call| {
-                Box::pin(async { ToolResult::error("fail") })
-            });
+            let tool_fn: ToolCallNext =
+                ToolCallNext::new(|_call| Box::pin(async { ToolResult::error("fail") }));
             cb.wrap_tool_call(&mut ctx, &call, tool_fn).await;
         }
 
         // Now the circuit is open — calls should be blocked without executing
-        let tool_fn: ToolCallNext = ToolCallNext::new(|_call| {
-            Box::pin(async { ToolResult::success("should not run") })
-        });
+        let tool_fn: ToolCallNext =
+            ToolCallNext::new(|_call| Box::pin(async { ToolResult::success("should not run") }));
         let result = cb.wrap_tool_call(&mut ctx, &call, tool_fn).await;
-        assert!(result.is_error, "Expected blocked call, got: {}", result.output);
+        assert!(
+            result.is_error,
+            "Expected blocked call, got: {}",
+            result.output
+        );
         assert!(
             result.output.contains("circuit is open") || result.output.contains("Circuit is open"),
             "Expected circuit open message, got: {}",
@@ -270,17 +274,15 @@ mod tests {
 
         // Fail twice (below threshold)
         for _ in 0..2 {
-            let tool_fn: ToolCallNext = ToolCallNext::new(|_call| {
-                Box::pin(async { ToolResult::error("fail") })
-            });
+            let tool_fn: ToolCallNext =
+                ToolCallNext::new(|_call| Box::pin(async { ToolResult::error("fail") }));
             cb.wrap_tool_call(&mut ctx, &call, tool_fn).await;
         }
         assert_eq!(cb.state(), CircuitState::Closed);
 
         // Success resets the counter
-        let tool_fn: ToolCallNext = ToolCallNext::new(|_call| {
-            Box::pin(async { ToolResult::success("ok") })
-        });
+        let tool_fn: ToolCallNext =
+            ToolCallNext::new(|_call| Box::pin(async { ToolResult::success("ok") }));
         cb.wrap_tool_call(&mut ctx, &call, tool_fn).await;
 
         // Should still be closed, and consecutive failures reset
@@ -295,9 +297,8 @@ mod tests {
         let call = make_call("tool");
 
         // Open the circuit
-        let tool_fn: ToolCallNext = ToolCallNext::new(|_call| {
-            Box::pin(async { ToolResult::error("fail") })
-        });
+        let tool_fn: ToolCallNext =
+            ToolCallNext::new(|_call| Box::pin(async { ToolResult::error("fail") }));
         cb.wrap_tool_call(&mut ctx, &call, tool_fn).await;
         assert_eq!(cb.state(), CircuitState::Open);
 
@@ -315,17 +316,15 @@ mod tests {
         let call = make_call("tool");
 
         // Open the circuit
-        let tool_fn: ToolCallNext = ToolCallNext::new(|_call| {
-            Box::pin(async { ToolResult::error("fail") })
-        });
+        let tool_fn: ToolCallNext =
+            ToolCallNext::new(|_call| Box::pin(async { ToolResult::error("fail") }));
         cb.wrap_tool_call(&mut ctx, &call, tool_fn).await;
         assert_eq!(cb.state(), CircuitState::Open);
 
         // After recovery timeout, should transition to half-open
         // (0-second timeout means immediate transition on next call)
-        let tool_fn: ToolCallNext = ToolCallNext::new(|_call| {
-            Box::pin(async { ToolResult::success("recovered") })
-        });
+        let tool_fn: ToolCallNext =
+            ToolCallNext::new(|_call| Box::pin(async { ToolResult::success("recovered") }));
         let result = cb.wrap_tool_call(&mut ctx, &call, tool_fn).await;
         assert!(!result.is_error);
         // After enough successful probes, should be closed
@@ -339,22 +338,19 @@ mod tests {
         let call = make_call("tool");
 
         // Open the circuit
-        let tool_fn: ToolCallNext = ToolCallNext::new(|_call| {
-            Box::pin(async { ToolResult::error("fail") })
-        });
+        let tool_fn: ToolCallNext =
+            ToolCallNext::new(|_call| Box::pin(async { ToolResult::error("fail") }));
         cb.wrap_tool_call(&mut ctx, &call, tool_fn).await;
 
         // First probe succeeds (half-open)
-        let tool_fn: ToolCallNext = ToolCallNext::new(|_call| {
-            Box::pin(async { ToolResult::success("ok") })
-        });
+        let tool_fn: ToolCallNext =
+            ToolCallNext::new(|_call| Box::pin(async { ToolResult::success("ok") }));
         cb.wrap_tool_call(&mut ctx, &call, tool_fn).await;
         assert_eq!(cb.state(), CircuitState::HalfOpen);
 
         // Second probe fails — should re-open
-        let tool_fn: ToolCallNext = ToolCallNext::new(|_call| {
-            Box::pin(async { ToolResult::error("fail again") })
-        });
+        let tool_fn: ToolCallNext =
+            ToolCallNext::new(|_call| Box::pin(async { ToolResult::error("fail again") }));
         cb.wrap_tool_call(&mut ctx, &call, tool_fn).await;
         assert_eq!(cb.state(), CircuitState::Open);
     }

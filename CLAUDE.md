@@ -1,8 +1,8 @@
 # CatCode — CLAUDE.md
 
-> 这是 CatCode 项目的完整架构规范文档。
-> Claude Code 应严格按照本文档的设计原则、分层架构和接口约定来实现代码。
-> 遇到设计冲突时，以本文档为准。
+> 这是 CatCode 的架构规范和路线图文档，包含已实现能力与目标设计。
+> 当前实现事实以代码、AGENTS.md 和 README.md 为准；本文档中更超前的章节应视为设计目标。
+> 遇到设计冲突时，优先遵循 AGENTS.md、当前代码边界和已通过测试的行为。
 
 ---
 
@@ -15,7 +15,7 @@ CatCode 是一个**模型无关的开源 AI 编程 Agent**，以 Rust 实现，T
 - Harness 工程层弥补模型能力差异，而非依赖模型本身
 - 极致的 context 工程和 token 效率优化
 - 后台多 SubAgent 并发运行，支持远程控制
-- 完整沙盒隔离，生产级安全
+- NativeSandbox 安全控制：路径检查、超时、输出截断、操作分级和审批门禁；容器级隔离属于路线图
 
 **技术栈：**
 - 语言：Rust（全栈，含 TUI 和 daemon）
@@ -48,7 +48,7 @@ catcode/
 │   ├── catcode-tui/           # TUI binary
 │   ├── catcode-cli/           # 非交互式 CLI binary
 │   ├── catcode-provider/      # 模型 Provider 抽象 + 实现
-│   ├── catcode-harness/       # Harness 可靠性层
+│   ├── catcode-middleware/    # Middleware 可靠性层
 │   ├── catcode-context/       # Context 工程 + Token 管理
 │   ├── catcode-sandbox/       # 沙盒隔离层
 │   ├── catcode-tools/         # 内置工具集
@@ -796,6 +796,10 @@ GET    /api/v1/sessions              # 列出所有 session
 POST   /api/v1/sessions              # 创建新 session
 GET    /api/v1/sessions/:id          # 获取 session 状态
 DELETE /api/v1/sessions/:id          # 终止 session
+GET    /api/v1/sessions/:id/audit    # 查看审计日志
+GET    /api/v1/sessions/:id/messages # 查看消息历史
+GET    /api/v1/sessions/:id/recovery # 查看恢复计划
+GET    /api/v1/sessions/:id/usage    # 查看 token 用量
 POST   /api/v1/sessions/:id/pause    # 暂停
 POST   /api/v1/sessions/:id/resume   # 恢复
 POST   /api/v1/sessions/:id/message  # 发送消息给 Agent

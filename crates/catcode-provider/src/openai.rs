@@ -265,7 +265,7 @@ pub struct OpenAIProvider {
 }
 
 impl OpenAIProvider {
-/// Create a new OpenAI-compatible provider.
+    /// Create a new OpenAI-compatible provider.
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,
@@ -544,9 +544,7 @@ mod tests {
     fn test_serialize_tool_result_message() {
         let msg = OpenAIMessage {
             role: "tool".to_string(),
-            content: Some(serde_json::Value::String(
-                "file contents here".to_string(),
-            )),
+            content: Some(serde_json::Value::String("file contents here".to_string())),
             tool_calls: None,
             tool_call_id: Some("call_123".to_string()),
         };

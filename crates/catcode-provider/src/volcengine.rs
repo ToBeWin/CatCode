@@ -12,11 +12,46 @@ use serde::{Deserialize, Serialize};
 
 /// Built-in Volcengine model identifiers for reference.
 pub const VOLCENGINE_MODELS: &[(&str, &str, f64, f64, u64, ModelTier)] = &[
-    ("doubao-1.5-pro-256k", "Doubao 1.5 Pro 256K", 0.8, 0.8, 256_000, ModelTier::Powerful),
-    ("doubao-1.5-pro-32k", "Doubao 1.5 Pro 32K", 0.35, 0.35, 32_000, ModelTier::Powerful),
-    ("doubao-1.5-lite-32k", "Doubao 1.5 Lite 32K", 0.1, 0.1, 128_000, ModelTier::Fast),
-    ("deepseek-r1-250120", "DeepSeek R1", 0.55, 2.19, 128_000, ModelTier::Powerful),
-    ("deepseek-v3-241226", "DeepSeek V3", 0.5, 0.5, 128_000, ModelTier::Balanced),
+    (
+        "doubao-1.5-pro-256k",
+        "Doubao 1.5 Pro 256K",
+        0.8,
+        0.8,
+        256_000,
+        ModelTier::Powerful,
+    ),
+    (
+        "doubao-1.5-pro-32k",
+        "Doubao 1.5 Pro 32K",
+        0.35,
+        0.35,
+        32_000,
+        ModelTier::Powerful,
+    ),
+    (
+        "doubao-1.5-lite-32k",
+        "Doubao 1.5 Lite 32K",
+        0.1,
+        0.1,
+        128_000,
+        ModelTier::Fast,
+    ),
+    (
+        "deepseek-r1-250120",
+        "DeepSeek R1",
+        0.55,
+        2.19,
+        128_000,
+        ModelTier::Powerful,
+    ),
+    (
+        "deepseek-v3-241226",
+        "DeepSeek V3",
+        0.5,
+        0.5,
+        128_000,
+        ModelTier::Balanced,
+    ),
 ];
 
 // === Request types (OpenAI-compatible) ===
@@ -189,7 +224,11 @@ fn convert_message(msg: &Message) -> Result<VolcengineMessage, ProviderError> {
 
     Ok(VolcengineMessage {
         role: role.to_string(),
-        content: if msg.content.is_empty() { None } else { Some(msg.content.clone()) },
+        content: if msg.content.is_empty() {
+            None
+        } else {
+            Some(msg.content.clone())
+        },
         tool_calls,
         tool_call_id: msg.tool_call_id.clone(),
     })
@@ -252,7 +291,7 @@ pub struct VolcengineProvider {
 }
 
 impl VolcengineProvider {
-/// Create a new Volcengine provider.
+    /// Create a new Volcengine provider.
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,
@@ -295,14 +334,16 @@ impl Provider for VolcengineProvider {
     fn supported_models(&self) -> Vec<ModelInfo> {
         VOLCENGINE_MODELS
             .iter()
-            .map(|(id, name, input_price, output_price, ctx, tier)| ModelInfo {
-                id: id.to_string(),
-                display_name: name.to_string(),
-                input_price_per_mtok: *input_price,
-                output_price_per_mtok: *output_price,
-                context_window: *ctx,
-                tier: *tier,
-            })
+            .map(
+                |(id, name, input_price, output_price, ctx, tier)| ModelInfo {
+                    id: id.to_string(),
+                    display_name: name.to_string(),
+                    input_price_per_mtok: *input_price,
+                    output_price_per_mtok: *output_price,
+                    context_window: *ctx,
+                    tier: *tier,
+                },
+            )
             .collect()
     }
 
@@ -749,13 +790,22 @@ mod tests {
         let provider = create_test_provider();
         let models = provider.supported_models();
 
-        let doubao_pro = models.iter().find(|m| m.id == "doubao-1.5-pro-32k").unwrap();
+        let doubao_pro = models
+            .iter()
+            .find(|m| m.id == "doubao-1.5-pro-32k")
+            .unwrap();
         assert_eq!(doubao_pro.tier, ModelTier::Powerful);
 
-        let lite = models.iter().find(|m| m.id == "doubao-1.5-lite-32k").unwrap();
+        let lite = models
+            .iter()
+            .find(|m| m.id == "doubao-1.5-lite-32k")
+            .unwrap();
         assert_eq!(lite.tier, ModelTier::Fast);
 
-        let ds_v3 = models.iter().find(|m| m.id == "deepseek-v3-241226").unwrap();
+        let ds_v3 = models
+            .iter()
+            .find(|m| m.id == "deepseek-v3-241226")
+            .unwrap();
         assert_eq!(ds_v3.tier, ModelTier::Balanced);
     }
 }

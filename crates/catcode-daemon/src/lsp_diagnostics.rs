@@ -20,13 +20,13 @@ pub struct Diagnostic {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 /// [`DiagnosticSeverity`]
 pub enum DiagnosticSeverity {
-/// [`Error`].
+    /// [`Error`].
     Error,
-/// [`Warning`].
+    /// [`Warning`].
     Warning,
-/// [`Info`].
+    /// [`Info`].
     Info,
-/// [`Hint`].
+    /// [`Hint`].
     Hint,
 }
 
@@ -73,15 +73,12 @@ impl DiagnosticRegistry {
         }
     }
 
-/// Register.
+    /// Register.
     pub fn register(&mut self, file: &Path, incoming: Vec<Diagnostic>) -> Vec<Diagnostic> {
         if !self.delivered_cache.contains(file) {
             self.delivered_cache.put(file.to_path_buf(), HashSet::new());
         }
-        let delivered = self
-            .delivered_cache
-            .get_mut(file)
-            .expect("just inserted");
+        let delivered = self.delivered_cache.get_mut(file).expect("just inserted");
 
         let mut new_diags = Vec::new();
         for d in incoming {
@@ -99,13 +96,16 @@ impl DiagnosticRegistry {
         new_diags
     }
 
-/// Clear file.
+    /// Clear file.
     pub fn clear_file(&mut self, file: &Path) {
         self.delivered_cache.pop(file);
     }
 
-/// Build attachment.
-    pub fn build_attachment(&self, files_with_diags: &[DiagnosticFile]) -> Option<DiagnosticAttachment> {
+    /// Build attachment.
+    pub fn build_attachment(
+        &self,
+        files_with_diags: &[DiagnosticFile],
+    ) -> Option<DiagnosticAttachment> {
         let mut all: Vec<&Diagnostic> = Vec::new();
         for df in files_with_diags {
             if let Some(delivered_set) = self.delivered_cache.peek(&df.file) {
@@ -175,31 +175,32 @@ impl LspWatcher {
         }
     }
 
-/// Add watch.
+    /// Add watch.
     pub fn add_watch(&mut self, path: PathBuf) {
         self.watch_paths.push(path);
     }
 
-/// Poll.
+    /// Poll.
     pub fn poll(&self) -> Vec<DiagnosticFile> {
         let mut results = Vec::new();
         for path in &self.watch_paths {
             if let Ok(content) = std::fs::read_to_string(path)
-                && let Ok(diags) = serde_json::from_str::<Vec<Diagnostic>>(&content) {
-                    let mut registry = self.registry.blocking_lock();
-                    let new = registry.register(path, diags);
-                    if !new.is_empty() {
-                        results.push(DiagnosticFile {
-                            file: path.clone(),
-                            diagnostics: new,
-                        });
-                    }
+                && let Ok(diags) = serde_json::from_str::<Vec<Diagnostic>>(&content)
+            {
+                let mut registry = self.registry.blocking_lock();
+                let new = registry.register(path, diags);
+                if !new.is_empty() {
+                    results.push(DiagnosticFile {
+                        file: path.clone(),
+                        diagnostics: new,
+                    });
                 }
+            }
         }
         results
     }
 
-/// Clear file.
+    /// Clear file.
     pub fn clear_file(&self, path: &Path) {
         let mut registry = self.registry.blocking_lock();
         registry.clear_file(path);
@@ -233,9 +234,27 @@ mod tests {
         let file = Path::new("src/main.rs");
 
         let diags = vec![
-            diag("src/main.rs", 1, 1, DiagnosticSeverity::Error, "first error"),
-            diag("src/main.rs", 1, 1, DiagnosticSeverity::Error, "first error"),
-            diag("src/main.rs", 2, 1, DiagnosticSeverity::Warning, "second warning"),
+            diag(
+                "src/main.rs",
+                1,
+                1,
+                DiagnosticSeverity::Error,
+                "first error",
+            ),
+            diag(
+                "src/main.rs",
+                1,
+                1,
+                DiagnosticSeverity::Error,
+                "first error",
+            ),
+            diag(
+                "src/main.rs",
+                2,
+                1,
+                DiagnosticSeverity::Warning,
+                "second warning",
+            ),
         ];
 
         let new = registry.register(file, diags);
@@ -249,7 +268,15 @@ mod tests {
         let file = Path::new("src/main.rs");
 
         let diags: Vec<Diagnostic> = (0..10)
-            .map(|i| diag("src/main.rs", i, 1, DiagnosticSeverity::Error, &format!("error {}", i)))
+            .map(|i| {
+                diag(
+                    "src/main.rs",
+                    i,
+                    1,
+                    DiagnosticSeverity::Error,
+                    &format!("error {}", i),
+                )
+            })
             .collect();
 
         let new = registry.register(file, diags);
@@ -261,7 +288,13 @@ mod tests {
         let mut registry = DiagnosticRegistry::new();
         let file = Path::new("src/main.rs");
 
-        let diags = vec![diag("src/main.rs", 1, 1, DiagnosticSeverity::Error, "error")];
+        let diags = vec![diag(
+            "src/main.rs",
+            1,
+            1,
+            DiagnosticSeverity::Error,
+            "error",
+        )];
 
         let new = registry.register(file, diags.clone());
         assert_eq!(new.len(), 1);

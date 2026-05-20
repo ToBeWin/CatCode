@@ -48,10 +48,7 @@ pub async fn run(project_dir: PathBuf) -> anyhow::Result<()> {
     let db_path = project_dir.join(".catcode").join("catcode.db");
     let restored_count = {
         let mut count = 0u64;
-        if let Ok(db) = catcode_daemon::Database::new(
-            &db_path.to_string_lossy(),
-        )
-        .await
+        if let Ok(db) = catcode_daemon::Database::new(&db_path.to_string_lossy()).await
             && let Ok(sessions) = db.list_sessions().await
         {
             for row in &sessions {
@@ -109,7 +106,11 @@ pub async fn run(project_dir: PathBuf) -> anyhow::Result<()> {
         if restored_count > 0 {
             app.add_message(
                 app::MessageRole::System,
-                format!("Restored {} session{} from last session.", restored_count, if restored_count == 1 { "" } else { "s" }),
+                format!(
+                    "Restored {} session{} from last session.",
+                    restored_count,
+                    if restored_count == 1 { "" } else { "s" }
+                ),
             );
         }
         let welcome_box = "\

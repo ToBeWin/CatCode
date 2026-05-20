@@ -31,7 +31,7 @@ pub struct ExtensionManager {
 }
 
 impl ExtensionManager {
-/// Create an empty extension manager.
+    /// Create an empty extension manager.
     pub fn new() -> Self {
         Self {
             skills: skill::SkillRegistry::new(),
@@ -80,7 +80,10 @@ impl ExtensionManager {
     // === MCP management ===
 
     /// Add and connect to an MCP server.
-    pub async fn add_mcp_server(&mut self, config: mcp::McpServerConfig) -> Result<(), mcp::McpError> {
+    pub async fn add_mcp_server(
+        &mut self,
+        config: mcp::McpServerConfig,
+    ) -> Result<(), mcp::McpError> {
         self.mcp.add_server(config).await
     }
 
@@ -121,8 +124,8 @@ impl Default for ExtensionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plugin::PluginMetadata;
     use async_trait::async_trait;
+    use plugin::PluginMetadata;
     use std::collections::HashMap;
 
     struct NoopPlugin {

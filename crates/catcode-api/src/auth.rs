@@ -12,10 +12,10 @@ pub struct AuthConfig {
 /// Authentication mode for the API server.
 pub enum AuthMode {
     /// Only listen on 127.0.0.1, no auth required.
-/// [`LocalOnly`].
+    /// [`LocalOnly`].
     LocalOnly,
     /// Bearer token authentication.
-/// [`Token`].
+    /// [`Token`].
     Token,
 }
 
@@ -82,10 +82,9 @@ mod tests {
             token: Some("secret123".to_string()),
         };
         let mut parts = empty_parts();
-        parts.headers.insert(
-            "authorization",
-            "Bearer secret123".parse().unwrap(),
-        );
+        parts
+            .headers
+            .insert("authorization", "Bearer secret123".parse().unwrap());
         assert!(validate_auth(&config, &parts).is_ok());
     }
 
@@ -145,10 +144,9 @@ mod tests {
             token: Some("   ".to_string()),
         };
         let mut parts = empty_parts();
-        parts.headers.insert(
-            "authorization",
-            "Bearer    ".parse().unwrap(),
-        );
+        parts
+            .headers
+            .insert("authorization", "Bearer    ".parse().unwrap());
         assert!(validate_auth(&config, &parts).is_ok());
     }
 
@@ -159,10 +157,7 @@ mod tests {
             token: Some("secret".to_string()),
         };
         let mut parts = empty_parts();
-        parts.headers.insert(
-            "authorization",
-            "".parse().unwrap(),
-        );
+        parts.headers.insert("authorization", "".parse().unwrap());
         assert_eq!(
             validate_auth(&config, &parts),
             Err(StatusCode::UNAUTHORIZED)
@@ -186,10 +181,9 @@ mod tests {
             token: Some("tok-en_123!@#".to_string()),
         };
         let mut parts = empty_parts();
-        parts.headers.insert(
-            "authorization",
-            "Bearer tok-en_123!@#".parse().unwrap(),
-        );
+        parts
+            .headers
+            .insert("authorization", "Bearer tok-en_123!@#".parse().unwrap());
         assert!(validate_auth(&config, &parts).is_ok());
     }
 }

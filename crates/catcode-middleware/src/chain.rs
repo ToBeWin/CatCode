@@ -44,12 +44,12 @@ impl MiddlewareChain {
         }
     }
 
-/// Add.
+    /// Add.
     pub fn add(&mut self, middleware: impl Middleware + 'static) {
         self.middlewares.push(Arc::new(middleware));
     }
 
-/// Add arc.
+    /// Add arc.
     pub fn add_arc(&mut self, middleware: Arc<dyn Middleware>) {
         self.middlewares.push(middleware);
     }

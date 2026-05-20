@@ -5,32 +5,32 @@ use std::sync::Arc;
 /// Severity level of a review finding.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ReviewSeverity {
-/// [`Error`].
+    /// [`Error`].
     Error,
-/// [`Warning`].
+    /// [`Warning`].
     Warning,
-/// [`Info`].
+    /// [`Info`].
     Info,
 }
 
 /// Category of a review finding.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ReviewCategory {
-/// [`Bug`].
+    /// [`Bug`].
     Bug,
-/// [`Security`].
+    /// [`Security`].
     Security,
-/// [`Performance`].
+    /// [`Performance`].
     Performance,
-/// [`Style`].
+    /// [`Style`].
     Style,
-/// [`BestPractice`].
+    /// [`BestPractice`].
     BestPractice,
-/// [`Maintainability`].
+    /// [`Maintainability`].
     Maintainability,
-/// [`Documentation`].
+    /// [`Documentation`].
     Documentation,
-/// [`Testing`].
+    /// [`Testing`].
     Testing,
 }
 
@@ -93,7 +93,7 @@ pub struct CodeReviewer {
 }
 
 impl CodeReviewer {
-/// Create a new empty code reviewer.
+    /// Create a new empty code reviewer.
     pub fn new() -> Self {
         Self {
             files: Vec::new(),
@@ -121,18 +121,12 @@ impl CodeReviewer {
             review.files_reviewed.push(path.clone());
             let lines: Vec<&str> = content.lines().collect();
 
-            review
-                .findings
-                .extend(Self::check_todos(path, &lines));
+            review.findings.extend(Self::check_todos(path, &lines));
             review
                 .findings
                 .extend(Self::check_debug_prints(path, &lines));
-            review
-                .findings
-                .extend(Self::check_secrets(path, &lines));
-            review
-                .findings
-                .extend(Self::check_unwrap(path, &lines));
+            review.findings.extend(Self::check_secrets(path, &lines));
+            review.findings.extend(Self::check_unwrap(path, &lines));
             review
                 .findings
                 .extend(Self::check_public_docs(path, &lines));
@@ -161,11 +155,7 @@ impl CodeReviewer {
     }
 
     /// Run LLM-based deep review.
-    pub async fn review_deep(
-        &self,
-        provider: Arc<dyn Provider>,
-        model: &str,
-    ) -> CodeReview {
+    pub async fn review_deep(&self, provider: Arc<dyn Provider>, model: &str) -> CodeReview {
         let mut review = CodeReview::new("Deep LLM Code Review");
 
         for (path, _) in &self.files {
@@ -233,18 +223,16 @@ Focus on:
 
         let request = ChatRequest {
             model: model.to_string(),
-            messages: vec![
-                Message {
-                    role: Role::User,
-                    content: format!(
-                        "Please review the following code changes:\n\n```\n{}\n```",
-                        diff_text
-                    ),
-                    tool_calls: None,
-                    tool_call_id: None,
-                    name: None,
-                },
-            ],
+            messages: vec![Message {
+                role: Role::User,
+                content: format!(
+                    "Please review the following code changes:\n\n```\n{}\n```",
+                    diff_text
+                ),
+                tool_calls: None,
+                tool_call_id: None,
+                name: None,
+            }],
             tools: None,
             system: Some(system_prompt.to_string()),
             max_tokens: Some(4096),
@@ -269,18 +257,16 @@ Focus on:
     }
 
     /// Combined review: patterns first, then LLM deep review.
-    pub async fn review_full(
-        &self,
-        provider: Arc<dyn Provider>,
-        model: &str,
-    ) -> CodeReview {
+    pub async fn review_full(&self, provider: Arc<dyn Provider>, model: &str) -> CodeReview {
         let mut review = self.review_patterns();
         let deep = self.review_deep(provider, model).await;
 
         for f in deep.findings {
-            if !review.findings.iter().any(|existing| {
-                existing.file == f.file && existing.title == f.title
-            }) {
+            if !review
+                .findings
+                .iter()
+                .any(|existing| existing.file == f.file && existing.title == f.title)
+            {
                 review.findings.push(f);
             }
         }
@@ -348,8 +334,7 @@ Focus on:
         let mut findings = Vec::new();
         for (i, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
-            if trimmed.starts_with("println!") && !trimmed.starts_with("println!(\"TODO")
-            {
+            if trimmed.starts_with("println!") && !trimmed.starts_with("println!(\"TODO") {
                 findings.push(ReviewFinding {
                     severity: ReviewSeverity::Warning,
                     category: ReviewCategory::Style,
@@ -391,20 +376,14 @@ Focus on:
                     ),
                 });
             }
-            if trimmed.starts_with("console.log")
-                || trimmed.starts_with("print(")
-            {
+            if trimmed.starts_with("console.log") || trimmed.starts_with("print(") {
                 findings.push(ReviewFinding {
                     severity: ReviewSeverity::Warning,
                     category: ReviewCategory::Style,
                     file: path.to_string(),
                     line: Some((i + 1) as u64),
                     title: "Debug print statement".to_string(),
-                    description: format!(
-                        "Console print at line {}: {}",
-                        i + 1,
-                        trimmed
-                    ),
+                    description: format!("Console print at line {}: {}", i + 1, trimmed),
                     suggestion: Some(
                         "Remove debug print statements or use a proper logging framework."
                             .to_string(),
@@ -517,13 +496,10 @@ Focus on:
                     file: path.to_string(),
                     line: Some((i + 1) as u64),
                     title: "Expect call may panic".to_string(),
-                    description: format!(
-                        ".expect() call at line {}: {}",
-                        i + 1,
-                        trimmed
-                    ),
+                    description: format!(".expect() call at line {}: {}", i + 1, trimmed),
                     suggestion: Some(
-                        "Consider using proper error propagation (?) instead of expect.".to_string(),
+                        "Consider using proper error propagation (?) instead of expect."
+                            .to_string(),
                     ),
                 });
             }
@@ -769,10 +745,16 @@ Focus on:
         // Try to extract JSON from code fence
         let json_str = if let Some(start) = text.find("```json") {
             let start = start + 7;
-            let end = text[start..].find("```").map(|e| start + e).unwrap_or(text.len());
+            let end = text[start..]
+                .find("```")
+                .map(|e| start + e)
+                .unwrap_or(text.len());
             text[start..end].trim()
         } else if let Some(start) = text.find('{') {
-            let end = text[start..].rfind('}').map(|e| start + e + 1).unwrap_or(text.len());
+            let end = text[start..]
+                .rfind('}')
+                .map(|e| start + e + 1)
+                .unwrap_or(text.len());
             &text[start..end]
         } else {
             text
@@ -828,11 +810,26 @@ Focus on:
         Some(ReviewFinding {
             severity,
             category,
-            file: val.get("file").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            file: val
+                .get("file")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             line: val.get("line").and_then(|v| v.as_u64()),
-            title: val.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            description: val.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            suggestion: val.get("suggestion").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            title: val
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            description: val
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            suggestion: val
+                .get("suggestion")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
         })
     }
 }
@@ -1034,10 +1031,7 @@ mod tests {
 
     #[test]
     fn test_check_todos_no_false_positive() {
-        let lines = vec![
-            "    let todo_list = vec![];",
-            "    let todo = true;",
-        ];
+        let lines = vec!["    let todo_list = vec![];", "    let todo = true;"];
         let findings = CodeReviewer::check_todos("test.rs", &lines);
         assert!(findings.is_empty());
     }
@@ -1156,12 +1150,7 @@ mod tests {
 
     #[test]
     fn test_check_public_docs_all_documented() {
-        let lines = vec![
-            "/// Does x",
-            "pub fn x() {}",
-            "/// Does y",
-            "pub fn y() {}",
-        ];
+        let lines = vec!["/// Does x", "pub fn x() {}", "/// Does y", "pub fn y() {}"];
         let findings = CodeReviewer::check_public_docs("test.rs", &lines);
         assert!(findings.is_empty());
     }
@@ -1183,7 +1172,8 @@ mod tests {
 
     #[test]
     fn test_check_long_functions_no_false() {
-        let content = "fn short() {\n    let x = 1;\n}\nfn also_short(a: i32) -> i32 {\n    a + 1\n}\n";
+        let content =
+            "fn short() {\n    let x = 1;\n}\nfn also_short(a: i32) -> i32 {\n    a + 1\n}\n";
         let lines: Vec<&str> = content.lines().collect();
         let findings = CodeReviewer::check_long_functions("test.rs", &lines);
         assert!(findings.is_empty());

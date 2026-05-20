@@ -140,8 +140,7 @@ mod tests {
         let result = tool.execute(json!({}), &ctx).await;
 
         assert!(!result.is_error);
-        assert!(result.output.contains("nothing to commit")
-            || result.output.contains("clean"));
+        assert!(result.output.contains("nothing to commit") || result.output.contains("clean"));
     }
 
     #[tokio::test]

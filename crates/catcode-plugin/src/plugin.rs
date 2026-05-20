@@ -84,7 +84,7 @@ pub struct PluginToolResult {
 }
 
 impl PluginToolResult {
-/// Create a successful plugin tool result.
+    /// Create a successful plugin tool result.
     pub fn success(output: impl Into<String>) -> Self {
         Self {
             output: output.into(),
@@ -93,7 +93,7 @@ impl PluginToolResult {
         }
     }
 
-/// Create an error plugin tool result.
+    /// Create an error plugin tool result.
     pub fn error(output: impl Into<String>) -> Self {
         Self {
             output: output.into(),
@@ -107,19 +107,19 @@ impl PluginToolResult {
 #[derive(Debug, thiserror::Error)]
 pub enum PluginError {
     #[error("Plugin not found: {0}")]
-/// [`NotFound`].
+    /// [`NotFound`].
     NotFound(String),
 
     #[error("Plugin already registered: {0}")]
-/// [`AlreadyRegistered`].
+    /// [`AlreadyRegistered`].
     AlreadyRegistered(String),
 
     #[error("Plugin load failed: {0}")]
-/// [`LoadFailed`].
+    /// [`LoadFailed`].
     LoadFailed(String),
 
     #[error("Plugin tool execution failed: {0}")]
-/// [`ToolFailed`].
+    /// [`ToolFailed`].
     ToolFailed(String),
 }
 
@@ -129,7 +129,7 @@ pub struct PluginRegistry {
 }
 
 impl PluginRegistry {
-/// Create an empty plugin registry.
+    /// Create an empty plugin registry.
     pub fn new() -> Self {
         Self {
             plugins: Vec::new(),
@@ -160,9 +160,9 @@ impl PluginRegistry {
             .ok_or_else(|| PluginError::NotFound(id.to_string()))?;
 
         let plugin = self.plugins.remove(pos);
-        plugin.on_unload().map_err(|e| {
-            PluginError::LoadFailed(format!("Failed to unload plugin '{id}': {e}"))
-        })?;
+        plugin
+            .on_unload()
+            .map_err(|e| PluginError::LoadFailed(format!("Failed to unload plugin '{id}': {e}")))?;
 
         Ok(())
     }
@@ -233,7 +233,11 @@ mod tests {
 
     #[async_trait]
     impl PluginToolHandler for TestToolHandler {
-        async fn execute(&self, _args: serde_json::Value, _ctx: &PluginContext) -> PluginToolResult {
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+            _ctx: &PluginContext,
+        ) -> PluginToolResult {
             PluginToolResult::success("done")
         }
     }
@@ -323,9 +327,7 @@ mod tests {
     #[test]
     fn test_plugin_registry_duplicate_id() {
         let mut registry = PluginRegistry::new();
-        registry
-            .register(Arc::new(TestPlugin::new("dup")))
-            .unwrap();
+        registry.register(Arc::new(TestPlugin::new("dup"))).unwrap();
         let result = registry.register(Arc::new(TestPlugin::new("dup")));
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -386,9 +388,7 @@ mod tests {
         registry
             .register(Arc::new(TestPlugin::new("no-provider")))
             .unwrap();
-        registry
-            .register(Arc::new(TestProviderPlugin))
-            .unwrap();
+        registry.register(Arc::new(TestProviderPlugin)).unwrap();
 
         let providers = registry.all_providers();
         assert_eq!(providers.len(), 1);
@@ -432,9 +432,7 @@ mod tests {
             project_dir: None,
             metadata: HashMap::new(),
         };
-        let result = handler
-            .execute(serde_json::json!({}), &ctx)
-            .await;
+        let result = handler.execute(serde_json::json!({}), &ctx).await;
         assert!(!result.is_error);
         assert_eq!(result.output, "done");
     }

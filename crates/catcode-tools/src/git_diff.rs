@@ -62,7 +62,11 @@ impl Tool for GitDiffTool {
         let mut cmd = Command::new("git");
         cmd.arg("diff");
 
-        if args.get("staged").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if args
+            .get("staged")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             cmd.arg("--cached");
         }
 
@@ -97,8 +101,6 @@ impl Tool for GitDiffTool {
         }
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -199,9 +201,7 @@ mod tests {
 
         let tool = GitDiffTool;
         let ctx = make_ctx(tmp.path());
-        let result = tool
-            .execute(json!({"staged": true}), &ctx)
-            .await;
+        let result = tool.execute(json!({"staged": true}), &ctx).await;
 
         assert!(!result.is_error);
         assert!(result.output.contains("+staged change"));

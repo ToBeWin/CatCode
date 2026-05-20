@@ -22,9 +22,9 @@ pub struct ValidationIssue {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 /// [`IssueSeverity`]
 pub enum IssueSeverity {
-/// [`Warning`].
+    /// [`Warning`].
     Warning,
-/// [`Error`].
+    /// [`Error`].
     Error,
 }
 
@@ -83,7 +83,9 @@ impl OutputValidatorMiddleware {
         // Validate JSON parse for write_file/patch_file outputs
         if call.name == "write_file" || call.name == "patch_file" {
             // These should not return JSON — they return success/error messages
-            if result.output.starts_with('{') && serde_json::from_str::<serde_json::Value>(&result.output).is_err() {
+            if result.output.starts_with('{')
+                && serde_json::from_str::<serde_json::Value>(&result.output).is_err()
+            {
                 issues.push(ValidationIssue {
                     severity: IssueSeverity::Warning,
                     message: "Output looks like JSON but is malformed".to_string(),
@@ -252,10 +254,12 @@ mod tests {
 
         let validation = validator.validate(&call, &result);
         assert!(!validation.is_valid);
-        assert!(validation
-            .issues
-            .iter()
-            .any(|i| i.severity == IssueSeverity::Error));
+        assert!(
+            validation
+                .issues
+                .iter()
+                .any(|i| i.severity == IssueSeverity::Error)
+        );
         assert!(validation.correction_hint.is_some());
     }
 
@@ -297,7 +301,12 @@ mod tests {
 
         let validation = validator.validate(&call, &result);
         assert!(validation.is_valid); // Warning only
-        assert!(validation.issues.iter().any(|i| i.message.contains("malformed")));
+        assert!(
+            validation
+                .issues
+                .iter()
+                .any(|i| i.message.contains("malformed"))
+        );
     }
 
     #[test]
@@ -326,9 +335,8 @@ mod tests {
         let mut ctx = AgentContext::new("test");
         let call = make_call("read_file");
 
-        let tool_fn: ToolCallNext = ToolCallNext::new(|_call| {
-            Box::pin(async { ToolResult::success("fn main() {}") })
-        });
+        let tool_fn: ToolCallNext =
+            ToolCallNext::new(|_call| Box::pin(async { ToolResult::success("fn main() {}") }));
 
         let result = mw.wrap_tool_call(&mut ctx, &call, tool_fn).await;
         assert!(!result.is_error);
@@ -341,9 +349,8 @@ mod tests {
         let mut ctx = AgentContext::new("test");
         let call = make_call("bash");
 
-        let tool_fn: ToolCallNext = ToolCallNext::new(|_call| {
-            Box::pin(async { ToolResult::success("rm -rf /") })
-        });
+        let tool_fn: ToolCallNext =
+            ToolCallNext::new(|_call| Box::pin(async { ToolResult::success("rm -rf /") }));
 
         let result = mw.wrap_tool_call(&mut ctx, &call, tool_fn).await;
         assert!(result.is_error);
@@ -356,9 +363,8 @@ mod tests {
         let mut ctx = AgentContext::new("test");
         let call = make_call("bash");
 
-        let tool_fn: ToolCallNext = ToolCallNext::new(|_call| {
-            Box::pin(async { ToolResult::error("command not found") })
-        });
+        let tool_fn: ToolCallNext =
+            ToolCallNext::new(|_call| Box::pin(async { ToolResult::error("command not found") }));
 
         let result = mw.wrap_tool_call(&mut ctx, &call, tool_fn).await;
         assert!(result.is_error);

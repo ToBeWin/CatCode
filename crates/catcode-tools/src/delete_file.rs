@@ -71,7 +71,11 @@ impl Tool for DeleteFileTool {
         };
 
         if ctx.dry_run {
-            let what = if metadata.is_dir() { "directory" } else { "file" };
+            let what = if metadata.is_dir() {
+                "directory"
+            } else {
+                "file"
+            };
             return ToolResult::success(format!(
                 "[dry-run] Would delete {} {}",
                 what,
@@ -100,10 +104,7 @@ impl Tool for DeleteFileTool {
             } else {
                 // Try non-recursive first
                 match fs::remove_dir(&path).await {
-                    Ok(_) => ToolResult::success(format!(
-                        "Deleted directory {}",
-                        path.display()
-                    )),
+                    Ok(_) => ToolResult::success(format!("Deleted directory {}", path.display())),
                     Err(e) => {
                         if e.kind() == std::io::ErrorKind::DirectoryNotEmpty {
                             ToolResult::error(format!(
@@ -123,11 +124,9 @@ impl Tool for DeleteFileTool {
         } else {
             match fs::remove_file(&path).await {
                 Ok(_) => ToolResult::success(format!("Deleted file {}", path.display())),
-                Err(e) => ToolResult::error(format!(
-                    "Failed to delete file {}: {}",
-                    path.display(),
-                    e
-                )),
+                Err(e) => {
+                    ToolResult::error(format!("Failed to delete file {}: {}", path.display(), e))
+                }
             }
         }
     }
@@ -158,9 +157,7 @@ mod tests {
 
         let tool = DeleteFileTool;
         let ctx = make_ctx(tmp.path());
-        let result = tool
-            .execute(json!({"path": "to_delete.txt"}), &ctx)
-            .await;
+        let result = tool.execute(json!({"path": "to_delete.txt"}), &ctx).await;
 
         assert!(!result.is_error);
         assert!(!file_path.exists());
@@ -171,9 +168,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let tool = DeleteFileTool;
         let ctx = make_ctx(tmp.path());
-        let result = tool
-            .execute(json!({"path": "nonexistent.txt"}), &ctx)
-            .await;
+        let result = tool.execute(json!({"path": "nonexistent.txt"}), &ctx).await;
 
         assert!(result.is_error);
         assert!(result.output.contains("does not exist"));
@@ -188,9 +183,7 @@ mod tests {
 
         let tool = DeleteFileTool;
         let ctx = make_ctx(tmp.path());
-        let result = tool
-            .execute(json!({"path": "mydir"}), &ctx)
-            .await;
+        let result = tool.execute(json!({"path": "mydir"}), &ctx).await;
 
         assert!(result.is_error);
         assert!(result.output.contains("not empty"));
@@ -227,9 +220,7 @@ mod tests {
             working_dir: Some(tmp.path().to_path_buf()),
             dry_run: true,
         };
-        let result = tool
-            .execute(json!({"path": "keep.txt"}), &ctx)
-            .await;
+        let result = tool.execute(json!({"path": "keep.txt"}), &ctx).await;
 
         assert!(!result.is_error);
         assert!(result.output.contains("dry-run"));
@@ -274,9 +265,7 @@ mod tests {
 
         let tool = DeleteFileTool;
         let ctx = make_ctx(tmp.path());
-        let result = tool
-            .execute(json!({"path": "emptydir"}), &ctx)
-            .await;
+        let result = tool.execute(json!({"path": "emptydir"}), &ctx).await;
 
         assert!(!result.is_error);
         assert!(!dir.exists());

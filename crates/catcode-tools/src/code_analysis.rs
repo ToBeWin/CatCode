@@ -68,9 +68,7 @@ impl Tool for CodeAnalysisTool {
             }
         };
 
-        let _language: Option<&str> = args
-            .get("language")
-            .and_then(|v| v.as_str());
+        let _language: Option<&str> = args.get("language").and_then(|v| v.as_str());
 
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = lines.len();
@@ -79,8 +77,11 @@ impl Tool for CodeAnalysisTool {
             .iter()
             .filter(|l| {
                 let t = l.trim();
-                !t.is_empty() && !t.starts_with("//") && !t.starts_with('#')
-                    && !t.starts_with("--") && !t.starts_with("/*")
+                !t.is_empty()
+                    && !t.starts_with("//")
+                    && !t.starts_with('#')
+                    && !t.starts_with("--")
+                    && !t.starts_with("/*")
                     && !t.starts_with('*')
             })
             .count();
@@ -155,7 +156,10 @@ fn extract_definitions(lines: &[&str]) -> HashMap<String, Vec<String>> {
 
         // class Name
         if let Some(name) = capture_after_prefix(trimmed, "class ") {
-            let name = name.split(|c: char| c.is_whitespace() || c == '{' || c == ':').next().unwrap_or(name);
+            let name = name
+                .split(|c: char| c.is_whitespace() || c == '{' || c == ':')
+                .next()
+                .unwrap_or(name);
             if !name.is_empty() {
                 classes.push(format!("{} (line {})", name, i + 1));
             }
@@ -163,7 +167,10 @@ fn extract_definitions(lines: &[&str]) -> HashMap<String, Vec<String>> {
 
         // struct Name
         if let Some(name) = capture_after_prefix(trimmed, "struct ") {
-            let name = name.split(|c: char| c.is_whitespace() || c == '{' || c == ';').next().unwrap_or(name);
+            let name = name
+                .split(|c: char| c.is_whitespace() || c == '{' || c == ';')
+                .next()
+                .unwrap_or(name);
             if !name.is_empty() {
                 structs.push(format!("{} (line {})", name, i + 1));
             }
@@ -171,7 +178,10 @@ fn extract_definitions(lines: &[&str]) -> HashMap<String, Vec<String>> {
 
         // enum Name
         if let Some(name) = capture_after_prefix(trimmed, "enum ") {
-            let name = name.split(|c: char| c.is_whitespace() || c == '{' || c == ';').next().unwrap_or(name);
+            let name = name
+                .split(|c: char| c.is_whitespace() || c == '{' || c == ';')
+                .next()
+                .unwrap_or(name);
             if !name.is_empty() {
                 enums.push(format!("{} (line {})", name, i + 1));
             }
@@ -179,7 +189,10 @@ fn extract_definitions(lines: &[&str]) -> HashMap<String, Vec<String>> {
 
         // trait Name
         if let Some(name) = capture_after_prefix(trimmed, "trait ") {
-            let name = name.split(|c: char| c.is_whitespace() || c == '{' || c == ';').next().unwrap_or(name);
+            let name = name
+                .split(|c: char| c.is_whitespace() || c == '{' || c == ';')
+                .next()
+                .unwrap_or(name);
             if !name.is_empty() {
                 traits.push(format!("{} (line {})", name, i + 1));
             }
@@ -187,7 +200,10 @@ fn extract_definitions(lines: &[&str]) -> HashMap<String, Vec<String>> {
 
         // interface Name (Go, Java, TypeScript)
         if let Some(name) = capture_after_prefix(trimmed, "interface ") {
-            let name = name.split(|c: char| c.is_whitespace() || c == '{' || c == ';').next().unwrap_or(name);
+            let name = name
+                .split(|c: char| c.is_whitespace() || c == '{' || c == ';')
+                .next()
+                .unwrap_or(name);
             if !name.is_empty() {
                 interfaces.push(format!("{} (line {})", name, i + 1));
             }
@@ -245,7 +261,10 @@ fn extract_definitions(lines: &[&str]) -> HashMap<String, Vec<String>> {
 
         // sub name (Perl)
         if let Some(name) = capture_after_prefix(trimmed, "sub ") {
-            let name = name.split(|c: char| c.is_whitespace() || c == '{').next().unwrap_or(name);
+            let name = name
+                .split(|c: char| c.is_whitespace() || c == '{')
+                .next()
+                .unwrap_or(name);
             if !name.is_empty() {
                 functions.push(format!("{} (line {})", name, i + 1));
             }
@@ -284,15 +303,12 @@ fn capture_after_prefix<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
             return None;
         }
         // Take up to the first paren, brace, angle bracket, colon (for generics), semicolon, or space
-        let name = rest.split(['(', '{', ';', '<'])
+        let name = rest
+            .split(['(', '{', ';', '<'])
             .next()
             .unwrap_or(rest)
             .trim();
-        if name.is_empty() {
-            None
-        } else {
-            Some(name)
-        }
+        if name.is_empty() { None } else { Some(name) }
     } else {
         None
     }
@@ -444,12 +460,21 @@ mod tests {
     fn test_detect_language() {
         assert_eq!(detect_language(std::path::Path::new("foo.rs")), "rust");
         assert_eq!(detect_language(std::path::Path::new("foo.py")), "python");
-        assert_eq!(detect_language(std::path::Path::new("foo.js")), "javascript");
-        assert_eq!(detect_language(std::path::Path::new("foo.ts")), "typescript");
+        assert_eq!(
+            detect_language(std::path::Path::new("foo.js")),
+            "javascript"
+        );
+        assert_eq!(
+            detect_language(std::path::Path::new("foo.ts")),
+            "typescript"
+        );
         assert_eq!(detect_language(std::path::Path::new("foo.go")), "go");
         assert_eq!(detect_language(std::path::Path::new("foo.java")), "java");
         assert_eq!(detect_language(std::path::Path::new("foo.rb")), "ruby");
-        assert_eq!(detect_language(std::path::Path::new("foo.unknown")), "unknown");
+        assert_eq!(
+            detect_language(std::path::Path::new("foo.unknown")),
+            "unknown"
+        );
     }
 
     #[test]
@@ -463,10 +488,7 @@ mod tests {
             capture_after_prefix("struct Point {", "struct "),
             Some("Point")
         );
-        assert_eq!(
-            capture_after_prefix("enum Color {", "enum "),
-            Some("Color")
-        );
+        assert_eq!(capture_after_prefix("enum Color {", "enum "), Some("Color"));
         assert_eq!(capture_after_prefix("fn ", "fn "), None);
         assert_eq!(capture_after_prefix("not a match", "fn "), None);
     }

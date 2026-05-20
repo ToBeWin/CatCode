@@ -63,6 +63,53 @@ pub struct RunMessageResult {
     pub cache_tokens: u64,
 }
 
+/// API-visible audit log entry for mutating tool operations.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct AuditLogEntry {
+    pub id: i64,
+    pub session_id: String,
+    pub operation: String,
+    pub tool: Option<String>,
+    pub args: Option<String>,
+    pub level: String,
+    pub approved_by: Option<String>,
+    pub result: String,
+    pub created_at: String,
+}
+
+/// API-visible persisted message entry.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct MessageEntry {
+    pub id: i64,
+    pub session_id: String,
+    pub role: String,
+    pub content: String,
+    pub token_count: Option<i64>,
+    pub created_at: String,
+}
+
+/// API-visible aggregated token usage for a session.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct UsageSummary {
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub total_tokens: i64,
+    pub cost_usd: f64,
+}
+
+/// API-visible recovery plan for a session.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct RecoveryPlan {
+    pub session_id: String,
+    pub state: String,
+    pub failure_reason: Option<String>,
+    pub summary: String,
+    pub next_steps: Vec<String>,
+    pub recent_messages: Vec<MessageEntry>,
+    pub usage: UsageSummary,
+}
+
 /// Backend that executes a user message for a session.
 #[async_trait]
 pub trait MessageRunner: Send + Sync {
@@ -87,6 +134,7 @@ pub trait SessionStore: Send + Sync {
         content: &str,
         token_count: Option<i64>,
     ) -> anyhow::Result<()>;
+    async fn list_messages(&self, session_id: &str) -> anyhow::Result<Vec<MessageEntry>>;
     async fn record_token_usage(
         &self,
         session: &ApiSession,
@@ -94,6 +142,8 @@ pub trait SessionStore: Send + Sync {
         output_tokens: u64,
         cache_tokens: u64,
     ) -> anyhow::Result<()>;
+    async fn get_usage(&self, session_id: &str) -> anyhow::Result<UsageSummary>;
+    async fn list_audit_log(&self, session_id: &str) -> anyhow::Result<Vec<AuditLogEntry>>;
 }
 
 impl AppState {

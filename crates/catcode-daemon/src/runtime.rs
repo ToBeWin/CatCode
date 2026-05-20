@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::agent_events::AgentEventSender;
 use anyhow::{Context, bail};
 use catcode_context::{ContextStack, TokenBudget};
 use catcode_core::Provider;
-use crate::agent_events::AgentEventSender;
 use catcode_provider::{
     anthropic::AnthropicProvider, deepseek::DeepSeekProvider, glm::GLMProvider,
     google::GoogleProvider, minimax::MiniMaxProvider, mock::MockProvider, ollama::OllamaProvider,
@@ -55,7 +55,8 @@ impl AgentRuntime {
         project_dir: &Path,
         options: AgentRuntimeOptions,
     ) -> anyhow::Result<AgentLoopResult> {
-        self.run_once_with_events(message, project_dir, options, None).await
+        self.run_once_with_events(message, project_dir, options, None)
+            .await
     }
 
     /// Run with an optional event sender for real-time TUI progress.

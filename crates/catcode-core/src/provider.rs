@@ -10,11 +10,11 @@ use crate::types::{ChatRequest, ChatResponse, TokenUsage};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 /// [`ModelTier`]
 pub enum ModelTier {
-/// [`Fast`].
+    /// [`Fast`].
     Fast,
-/// [`Balanced`].
+    /// [`Balanced`].
     Balanced,
-/// [`Powerful`].
+    /// [`Powerful`].
     Powerful,
 }
 

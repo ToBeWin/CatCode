@@ -5,17 +5,17 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RoutingStrategy {
     /// Always use a fixed model.
-/// [`Fixed`].
+    /// [`Fixed`].
     Fixed(String),
     /// Route based on task complexity.
-/// [`CostAware`].
+    /// [`CostAware`].
     CostAware {
         simple_model: String,
         powerful_model: String,
         complexity_threshold: f32,
     },
     /// Try models in priority order, falling back on failure.
-/// [`Fallback`].
+    /// [`Fallback`].
     Fallback(Vec<String>),
 }
 
@@ -123,9 +123,20 @@ pub fn estimate_complexity(description: &str) -> f32 {
 
     // Keywords indicating complexity
     let complex_keywords = [
-        "refactor", "architecture", "design", "optimize", "security",
-        "concurrent", "async", "distributed", "database", "migration",
-        "performance", "benchmark", "algorithm", "protocol",
+        "refactor",
+        "architecture",
+        "design",
+        "optimize",
+        "security",
+        "concurrent",
+        "async",
+        "distributed",
+        "database",
+        "migration",
+        "performance",
+        "benchmark",
+        "algorithm",
+        "protocol",
     ];
     for keyword in &complex_keywords {
         if lower.contains(keyword) {
@@ -175,10 +186,7 @@ mod tests {
         };
         let health = ProviderHealth::default();
 
-        assert_eq!(
-            router.select_model(0.3, &budget, &health),
-            "deepseek-chat"
-        );
+        assert_eq!(router.select_model(0.3, &budget, &health), "deepseek-chat");
     }
 
     #[test]
@@ -195,10 +203,7 @@ mod tests {
         };
         let health = ProviderHealth::default();
 
-        assert_eq!(
-            router.select_model(0.8, &budget, &health),
-            "claude-opus-4"
-        );
+        assert_eq!(router.select_model(0.8, &budget, &health), "claude-opus-4");
     }
 
     #[test]
@@ -209,17 +214,14 @@ mod tests {
             complexity_threshold: 0.6,
         });
         let budget = RoutingBudget {
-            remaining_tokens: 5_000,  // Less than 10% of total
+            remaining_tokens: 5_000, // Less than 10% of total
             total_tokens: 100_000,
             max_cost_per_request_usd: 1.0,
         };
         let health = ProviderHealth::default();
 
         // Even complex task falls back to simple model when budget is low
-        assert_eq!(
-            router.select_model(0.8, &budget, &health),
-            "deepseek-chat"
-        );
+        assert_eq!(router.select_model(0.8, &budget, &health), "deepseek-chat");
     }
 
     #[test]
@@ -238,10 +240,7 @@ mod tests {
         health.providers.insert("anthropic".to_string(), false);
 
         // Powerful model's provider is unhealthy — falls back to simple
-        assert_eq!(
-            router.select_model(0.8, &budget, &health),
-            "deepseek-chat"
-        );
+        assert_eq!(router.select_model(0.8, &budget, &health), "deepseek-chat");
     }
 
     #[test]
@@ -259,10 +258,7 @@ mod tests {
         let mut health = ProviderHealth::default();
         health.providers.insert("anthropic".to_string(), false);
 
-        assert_eq!(
-            router.select_model(0.5, &budget, &health),
-            "deepseek-chat"
-        );
+        assert_eq!(router.select_model(0.5, &budget, &health), "deepseek-chat");
     }
 
     #[test]
@@ -281,10 +277,7 @@ mod tests {
         health.providers.insert("model-b".to_string(), false);
 
         // Falls back to first model even if unhealthy
-        assert_eq!(
-            router.select_model(0.5, &budget, &health),
-            "model-a"
-        );
+        assert_eq!(router.select_model(0.5, &budget, &health), "model-a");
     }
 
     #[test]

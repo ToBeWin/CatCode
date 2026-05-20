@@ -9,12 +9,18 @@
 #
 # Environment:
 #   CATCODE_API_URL    (default: http://127.0.0.1:7070)
+#   CATCODE_PROJECT_DIR (default: current directory)
+#   CATCODE_PROVIDER_ID (default: deepseek)
+#   CATCODE_MODEL_ID    (default: deepseek-chat)
 #
 # Requires: curl, jq (optional, for pretty output)
 
 set -euo pipefail
 
 API_URL="${CATCODE_API_URL:-http://127.0.0.1:7070}"
+PROJECT_DIR="${CATCODE_PROJECT_DIR:-$(pwd)}"
+PROVIDER_ID="${CATCODE_PROVIDER_ID:-deepseek}"
+MODEL_ID="${CATCODE_MODEL_ID:-deepseek-chat}"
 SESSION_ID=""
 
 # Create a session if none exists
@@ -23,7 +29,11 @@ create_session() {
   name="cc-connect-$(date +%s)"
   SESSION_ID=$(curl -s -X POST "$API_URL/api/v1/sessions" \
     -H "Content-Type: application/json" \
-    -d "{\"name\": \"$name\", \"provider\": \"deepseek\", \"model\": \"deepseek-chat\"}" \
+    -d "$(printf '{"name":"%s","project_dir":"%s","provider_id":"%s","model_id":"%s"}' \
+      "$name" \
+      "$(printf '%s' "$PROJECT_DIR" | sed 's/\\/\\\\/g; s/"/\\"/g')" \
+      "$PROVIDER_ID" \
+      "$MODEL_ID")" \
     | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
   if [ -z "$SESSION_ID" ]; then

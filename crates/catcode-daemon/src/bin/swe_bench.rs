@@ -8,12 +8,14 @@
 //!   cargo run --bin catcode-swe-bench -- --dataset <path>  # real dataset
 //!   cargo run --bin catcode-swe-bench -- --help
 
-use clap::Parser;
-use catcode_daemon::swe_bench::{format_summary, load_dataset, sample_instances, save_results, SweBenchConfig, SweBenchHarness};
+use catcode_daemon::swe_bench::{
+    SweBenchConfig, SweBenchHarness, format_summary, load_dataset, sample_instances, save_results,
+};
 use catcode_middleware::MiddlewareChain;
 use catcode_provider::deepseek::DeepSeekProvider;
 use catcode_provider::mock::MockProvider;
 use catcode_tools::ToolRegistry;
+use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -51,9 +53,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     let args = Args::parse();
     let model = args.model.unwrap_or_else(|| "deepseek-chat".to_string());
@@ -65,12 +65,12 @@ async fn main() -> anyhow::Result<()> {
         "deepseek" => {
             let api_key =
                 std::env::var("DEEPSEEK_API_KEY").expect("DEEPSEEK_API_KEY env var required");
-            Arc::new(DeepSeekProvider::new(api_key, "https://api.deepseek.com".to_string()))
+            Arc::new(DeepSeekProvider::new(
+                api_key,
+                "https://api.deepseek.com".to_string(),
+            ))
         }
-        other => anyhow::bail!(
-            "Unsupported provider: {}. Use 'mock' or 'deepseek'",
-            other
-        ),
+        other => anyhow::bail!("Unsupported provider: {}. Use 'mock' or 'deepseek'", other),
     };
 
     let tools = Arc::new(ToolRegistry::with_builtins());

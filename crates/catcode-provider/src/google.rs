@@ -28,7 +28,9 @@ struct GeminiContent {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 enum GeminiPart {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     FunctionCall {
         #[serde(rename = "functionCall")]
         function_call: GeminiFunctionCall,
@@ -111,9 +113,7 @@ fn convert_request(req: &ChatRequest) -> Result<GeminiRequest, ProviderError> {
 
     let system_instruction = req.system.as_ref().map(|s| GeminiContent {
         role: "user".to_string(),
-        parts: vec![GeminiPart::Text {
-            text: s.clone(),
-        }],
+        parts: vec![GeminiPart::Text { text: s.clone() }],
     });
 
     let tools = req.tools.as_ref().map(|tools| {
@@ -212,9 +212,7 @@ fn convert_response(resp: GeminiResponse, model: &str) -> Result<ChatResponse, P
         match part {
             GeminiPart::Text { text } => {
                 if !text.is_empty() {
-                    content.push(ContentBlock::Text {
-                        text: text.clone(),
-                    });
+                    content.push(ContentBlock::Text { text: text.clone() });
                 }
             }
             GeminiPart::FunctionCall { function_call } => {
@@ -267,7 +265,7 @@ pub struct GoogleProvider {
 }
 
 impl GoogleProvider {
-/// Create a new Google (Gemini) provider.
+    /// Create a new Google (Gemini) provider.
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,
@@ -373,9 +371,7 @@ impl Provider for GoogleProvider {
                 .await
                 .unwrap_or_else(|_| "failed to read error body".to_string());
             return match status.as_u16() {
-                400 => Err(ProviderError::RequestFailed(format!(
-                    "Bad request: {body}"
-                ))),
+                400 => Err(ProviderError::RequestFailed(format!("Bad request: {body}"))),
                 401 | 403 => Err(ProviderError::AuthFailed(body)),
                 429 => Err(ProviderError::RateLimited {
                     retry_after_ms: 1000,

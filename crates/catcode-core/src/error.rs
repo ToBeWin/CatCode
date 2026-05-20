@@ -4,31 +4,31 @@
 /// [`ProviderError`]
 pub enum ProviderError {
     #[error("API request failed: {0}")]
-/// [`RequestFailed`].
+    /// [`RequestFailed`].
     RequestFailed(String),
 
     #[error("Rate limited, retry after {retry_after_ms}ms")]
-/// [`RateLimited`].
+    /// [`RateLimited`].
     RateLimited { retry_after_ms: u64 },
 
     #[error("Authentication failed: {0}")]
-/// [`AuthFailed`].
+    /// [`AuthFailed`].
     AuthFailed(String),
 
     #[error("Model not found: {0}")]
-/// [`ModelNotFound`].
+    /// [`ModelNotFound`].
     ModelNotFound(String),
 
     #[error("Stream error: {0}")]
-/// [`StreamError`].
+    /// [`StreamError`].
     StreamError(String),
 
     #[error("Timeout after {0}ms")]
-/// [`Timeout`].
+    /// [`Timeout`].
     Timeout(u64),
 
     #[error("Provider unavailable: {0}")]
-/// [`Unavailable`].
+    /// [`Unavailable`].
     Unavailable(String),
 }
 
@@ -38,23 +38,23 @@ pub enum ProviderError {
 /// [`ToolError`]
 pub enum ToolError {
     #[error("Tool not found: {0}")]
-/// [`NotFound`].
+    /// [`NotFound`].
     NotFound(String),
 
     #[error("Invalid arguments: {0}")]
-/// [`InvalidArgs`].
+    /// [`InvalidArgs`].
     InvalidArgs(String),
 
     #[error("Execution failed: {0}")]
-/// [`ExecutionFailed`].
+    /// [`ExecutionFailed`].
     ExecutionFailed(String),
 
     #[error("Permission denied: {0}")]
-/// [`PermissionDenied`].
+    /// [`PermissionDenied`].
     PermissionDenied(String),
 
     #[error("Timeout after {0}ms")]
-/// [`Timeout`].
+    /// [`Timeout`].
     Timeout(u64),
 }
 
@@ -64,15 +64,15 @@ pub enum ToolError {
 /// [`MiddlewareError`]
 pub enum MiddlewareError {
     #[error("Middleware '{name}' failed: {message}")]
-/// [`ExecutionFailed`].
+    /// [`ExecutionFailed`].
     ExecutionFailed { name: String, message: String },
 
     #[error("Loop detected: {0}")]
-/// [`LoopDetected`].
+    /// [`LoopDetected`].
     LoopDetected(String),
 
     #[error("Guardrail denied: {0}")]
-/// [`GuardrailDenied`].
+    /// [`GuardrailDenied`].
     GuardrailDenied(String),
 }
 
@@ -82,15 +82,15 @@ pub enum MiddlewareError {
 /// [`ContextError`]
 pub enum ContextError {
     #[error("Token budget exhausted: used {used}/{limit}")]
-/// [`BudgetExhausted`].
+    /// [`BudgetExhausted`].
     BudgetExhausted { used: u64, limit: u64 },
 
     #[error("Compression failed: {0}")]
-/// [`CompressionFailed`].
+    /// [`CompressionFailed`].
     CompressionFailed(String),
 
     #[error("Memory error: {0}")]
-/// [`MemoryError`].
+    /// [`MemoryError`].
     MemoryError(String),
 }
 
@@ -100,15 +100,15 @@ pub enum ContextError {
 /// [`ConfigError`]
 pub enum ConfigError {
     #[error("Config file not found: {0}")]
-/// [`NotFound`].
+    /// [`NotFound`].
     NotFound(String),
 
     #[error("Invalid config: {0}")]
-/// [`Invalid`].
+    /// [`Invalid`].
     Invalid(String),
 
     #[error("Missing required field: {0}")]
-/// [`MissingField`].
+    /// [`MissingField`].
     MissingField(String),
 }
 
@@ -118,27 +118,27 @@ pub enum ConfigError {
 /// [`CatCodeError`]
 pub enum CatCodeError {
     #[error("Provider error: {0}")]
-/// [`Provider`].
+    /// [`Provider`].
     Provider(#[from] ProviderError),
 
     #[error("Tool error: {0}")]
-/// [`Tool`].
+    /// [`Tool`].
     Tool(#[from] ToolError),
 
     #[error("Middleware error: {0}")]
-/// [`Middleware`].
+    /// [`Middleware`].
     Middleware(#[from] MiddlewareError),
 
     #[error("Context error: {0}")]
-/// [`Context`].
+    /// [`Context`].
     Context(#[from] ContextError),
 
     #[error("Config error: {0}")]
-/// [`Config`].
+    /// [`Config`].
     Config(#[from] ConfigError),
 
     #[error("{0}")]
-/// [`Other`].
+    /// [`Other`].
     Other(String),
 }
 
@@ -196,7 +196,9 @@ mod tests {
 
     #[test]
     fn test_provider_error_rate_limited() {
-        let err = ProviderError::RateLimited { retry_after_ms: 5000 };
+        let err = ProviderError::RateLimited {
+            retry_after_ms: 5000,
+        };
         assert!(err.to_string().contains("5000ms"));
     }
 
@@ -266,7 +268,10 @@ mod tests {
             name: "retry".to_string(),
             message: "max attempts reached".to_string(),
         };
-        assert_eq!(err.to_string(), "Middleware 'retry' failed: max attempts reached");
+        assert_eq!(
+            err.to_string(),
+            "Middleware 'retry' failed: max attempts reached"
+        );
     }
 
     #[test]

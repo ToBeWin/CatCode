@@ -4,13 +4,15 @@ use catcode_core::{
     ChatRequest, Message, Role, StopReason, TokenUsage, ToolCall, ToolContext, ToolDefinition,
 };
 use catcode_middleware::MiddlewareChain;
-use catcode_middleware::model_router::{estimate_complexity, ModelRouter, ProviderHealth, RoutingBudget};
+use catcode_middleware::model_router::{
+    ModelRouter, ProviderHealth, RoutingBudget, estimate_complexity,
+};
 use catcode_tools::ToolRegistry;
+use futures::StreamExt;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use futures::StreamExt;
 use tracing::{debug, info, warn};
 
 use crate::agent_events::{AgentEventSender, AgentStreamEvent};
@@ -76,7 +78,7 @@ pub struct AgentLoop {
 }
 
 impl AgentLoop {
-/// Create a new agent loop with the given provider, tools, middleware, context, and budget.
+    /// Create a new agent loop with the given provider, tools, middleware, context, and budget.
     pub fn new(
         provider: Arc<dyn Provider>,
         tools: Arc<ToolRegistry>,
@@ -106,49 +108,49 @@ impl AgentLoop {
         }
     }
 
-/// Set the maximum number of turns before forcing stop.
+    /// Set the maximum number of turns before forcing stop.
     pub fn with_max_turns(mut self, max_turns: u64) -> Self {
         self.max_turns = max_turns;
         self
     }
 
-/// Attach a model router for intelligent model selection.
+    /// Attach a model router for intelligent model selection.
     pub fn with_model_router(mut self, router: ModelRouter) -> Self {
         self.model_router = Some(router);
         self
     }
 
-/// Enable or disable automatic plan generation.
+    /// Enable or disable automatic plan generation.
     pub fn with_auto_plan(mut self, enabled: bool) -> Self {
         self.auto_plan_enabled = enabled;
         self
     }
 
-/// Enable or disable self-healing on tool failures.
+    /// Enable or disable self-healing on tool failures.
     pub fn with_self_heal(mut self, enabled: bool) -> Self {
         self.self_heal_enabled = enabled;
         self
     }
 
-/// Enable or disable sub-agent dispatching.
+    /// Enable or disable sub-agent dispatching.
     pub fn with_subagent_dispatch(mut self, enabled: bool) -> Self {
         self.subagent_dispatch_enabled = enabled;
         self
     }
 
-/// Enable or disable model routing.
+    /// Enable or disable model routing.
     pub fn with_model_routing(mut self, enabled: bool) -> Self {
         self.model_routing_enabled = enabled;
         self
     }
 
-/// Attach LSP diagnostic registry for compiler feedback.
+    /// Attach LSP diagnostic registry for compiler feedback.
     pub fn with_lsp(mut self, registry: Arc<Mutex<DiagnosticRegistry>>) -> Self {
         self.lsp_registry = Some(registry);
         self
     }
 
-/// Attach an event sender for real-time progress updates to TUI/API.
+    /// Attach an event sender for real-time progress updates to TUI/API.
     pub fn with_event_tx(mut self, tx: AgentEventSender) -> Self {
         self.event_tx = Some(tx);
         self
@@ -194,12 +196,16 @@ impl AgentLoop {
                 auto_plan = Some(plan.clone());
 
                 let prev = self.context.permanent.system_prompt.clone();
-                self.context.permanent.system_prompt =
-                    format!("{}\n\nPre-generated Plan:\n{}\n\nFollow this plan.", prev, plan);
+                self.context.permanent.system_prompt = format!(
+                    "{}\n\nPre-generated Plan:\n{}\n\nFollow this plan.",
+                    prev, plan
+                );
             }
         }
 
-        let mut result = self.run_with_session(user_message, project_dir, session_id).await?;
+        let mut result = self
+            .run_with_session(user_message, project_dir, session_id)
+            .await?;
         result.auto_plan = auto_plan;
         Ok(result)
     }
@@ -291,14 +297,21 @@ impl AgentLoop {
             };
 
             debug!(turn = turns, "Calling provider");
-            self.emit(AgentStreamEvent::Status(format!("Calling LLM (turn {})...", turns)));
+            self.emit(AgentStreamEvent::Status(format!(
+                "Calling LLM (turn {})...",
+                turns
+            )));
             let mut response_text = String::new();
             let mut thinking_text = String::new();
             let mut tool_calls: Vec<(String, String, serde_json::Value)> = Vec::new();
             let mut final_usage = TokenUsage::default();
             let mut final_stop_reason = None;
 
-            match self.provider.stream_chat(request.clone(), &provider_ctx).await {
+            match self
+                .provider
+                .stream_chat(request.clone(), &provider_ctx)
+                .await
+            {
                 Ok(mut stream) => {
                     debug!(turn = turns, "Using streaming for LLM call");
                     while let Some(chunk_result) = stream.next().await {
@@ -321,7 +334,8 @@ impl AgentLoop {
                                 tool_calls.push((
                                     id.clone(),
                                     delta.name.clone().unwrap_or_default(),
-                                    delta.args_delta
+                                    delta
+                                        .args_delta
                                         .as_ref()
                                         .and_then(|a| serde_json::from_str(a).ok())
                                         .unwrap_or(serde_json::Value::Null),
@@ -343,7 +357,10 @@ impl AgentLoop {
                     }
                 }
                 Err(_) => {
-                    debug!(turn = turns, "Streaming not supported, falling back to non-streaming");
+                    debug!(
+                        turn = turns,
+                        "Streaming not supported, falling back to non-streaming"
+                    );
                     let mut fallback_req = request.clone();
                     fallback_req.stream = false;
                     let response = self
@@ -402,7 +419,8 @@ impl AgentLoop {
                 })
                 .collect();
 
-            let assistant_msg = Message::assistant_with_tool_calls(&response_text, tc_objects.clone());
+            let assistant_msg =
+                Message::assistant_with_tool_calls(&response_text, tc_objects.clone());
             self.context.add_assistant_message(&response_text);
             all_messages.push(assistant_msg);
 
@@ -474,10 +492,7 @@ impl AgentLoop {
                         format!("{}\n\nSelf-healing advice: {}", result.output, advice);
                     self.context
                         .add_tool_result(call_id, &tool_name, modified_result.clone());
-                    all_messages.push(Message::tool_result(
-                        call_id,
-                        &modified_result.output,
-                    ));
+                    all_messages.push(Message::tool_result(call_id, &modified_result.output));
                 } else {
                     if !result.is_error {
                         self.failed_tools.remove(&tool_name);
@@ -572,7 +587,9 @@ impl AgentLoop {
 
     /// Resolve the model to use — via router if configured, otherwise default.
     fn resolve_model(&self, user_message: &str) -> String {
-        if self.model_routing_enabled && let Some(ref router) = self.model_router {
+        if self.model_routing_enabled
+            && let Some(ref router) = self.model_router
+        {
             let complexity = estimate_complexity(user_message);
             let used = self.budget.input_used + self.budget.output_used;
             let remaining = self.budget.session_limit.saturating_sub(used);
@@ -697,9 +714,7 @@ impl AgentLoop {
             return Vec::new();
         }
 
-        let results = spawner
-            .run_many(tasks, project_dir.to_path_buf())
-            .await;
+        let results = spawner.run_many(tasks, project_dir.to_path_buf()).await;
 
         results
             .into_iter()
@@ -721,7 +736,9 @@ impl AgentLoop {
     /// Reads from the diagnostic registry and appends any pending diagnostics
     /// to the system prompt so the LLM can see compiler feedback.
     fn attach_lsp_diagnostics(&self, request: &mut ChatRequest) {
-        let Some(ref registry) = self.lsp_registry else { return };
+        let Some(ref registry) = self.lsp_registry else {
+            return;
+        };
         let registry = registry.blocking_lock();
         if let Some(attachment) = registry.build_attachment(&[]) {
             let msg = format!(
@@ -780,15 +797,15 @@ impl AgentLoop {
 #[derive(Debug, thiserror::Error)]
 pub enum AgentLoopError {
     #[error("Provider error: {0}")]
-/// [`ProviderError`].
+    /// [`ProviderError`].
     ProviderError(String),
 
     #[error("Token budget exhausted")]
-/// [`BudgetExhausted`].
+    /// [`BudgetExhausted`].
     BudgetExhausted,
 
     #[error("Max turns ({0}) exceeded")]
-/// [`MaxTurnsExceeded`].
+    /// [`MaxTurnsExceeded`].
     MaxTurnsExceeded(u64),
 }
 
@@ -874,11 +891,18 @@ mod tests {
         let context = ContextStack::new("You are a helpful assistant.", "");
         let budget = TokenBudget::new(500_000, 50_000, 0.80);
 
-        AgentLoop::new(provider, tools, middleware, context, budget, "deepseek-chat")
-            .with_self_heal(false)
-            .with_model_routing(false)
-            .with_subagent_dispatch(false)
-            .with_auto_plan(false)
+        AgentLoop::new(
+            provider,
+            tools,
+            middleware,
+            context,
+            budget,
+            "deepseek-chat",
+        )
+        .with_self_heal(false)
+        .with_model_routing(false)
+        .with_subagent_dispatch(false)
+        .with_auto_plan(false)
     }
 
     fn make_smart_loop(response: &str) -> AgentLoop {
@@ -888,7 +912,14 @@ mod tests {
         let context = ContextStack::new("You are a helpful assistant.", "");
         let budget = TokenBudget::new(500_000, 50_000, 0.80);
 
-        AgentLoop::new(provider, tools, middleware, context, budget, "deepseek-chat")
+        AgentLoop::new(
+            provider,
+            tools,
+            middleware,
+            context,
+            budget,
+            "deepseek-chat",
+        )
     }
 
     #[tokio::test]
@@ -964,10 +995,7 @@ mod tests {
         agent.auto_plan_enabled = true;
 
         let result = agent
-            .run_intelligent(
-                "Fix typo in README",
-                std::path::Path::new("/tmp"),
-            )
+            .run_intelligent("Fix typo in README", std::path::Path::new("/tmp"))
             .await
             .unwrap();
 
@@ -1026,11 +1054,9 @@ mod tests {
         let mut agent = make_smart_loop("test");
         agent.subagent_dispatch_enabled = true;
 
-        let result = agent.try_dispatch_subagents(
-            "bash",
-            output,
-            std::path::Path::new("/tmp"),
-        ).await;
+        let result = agent
+            .try_dispatch_subagents("bash", output, std::path::Path::new("/tmp"))
+            .await;
 
         assert!(result.is_empty() || result.len() <= 3);
     }
@@ -1041,11 +1067,9 @@ mod tests {
         let mut agent = make_smart_loop("test");
         agent.subagent_dispatch_enabled = true;
 
-        let result = agent.try_dispatch_subagents(
-            "bash",
-            output,
-            std::path::Path::new("/tmp"),
-        ).await;
+        let result = agent
+            .try_dispatch_subagents("bash", output, std::path::Path::new("/tmp"))
+            .await;
 
         assert!(result.is_empty());
     }
@@ -1056,11 +1080,9 @@ mod tests {
         let mut agent = make_smart_loop("test");
         agent.subagent_dispatch_enabled = true;
 
-        let result = agent.try_dispatch_subagents(
-            "read_file",
-            output,
-            std::path::Path::new("/tmp"),
-        ).await;
+        let result = agent
+            .try_dispatch_subagents("read_file", output, std::path::Path::new("/tmp"))
+            .await;
 
         assert!(result.is_empty());
     }
@@ -1138,10 +1160,7 @@ mod tests {
         let mut agent = make_smart_loop("Response");
         // auto_plan_enabled defaults to true, but run() doesn't do plan generation
         let result = agent
-            .run(
-                "Refactor the architecture",
-                std::path::Path::new("/tmp"),
-            )
+            .run("Refactor the architecture", std::path::Path::new("/tmp"))
             .await
             .unwrap();
 
@@ -1178,12 +1197,16 @@ mod tests {
     #[test]
     fn test_build_failure_detection_rust() {
         let output = "error[E0308]: mismatched types\n   --> src/main.rs:25:8\n   |\n25 |     let x: i32 = \"hello\";\n   |         ^ expected `i32`, found `&str`";
-        assert_eq!(detect_build_failure(output), Some("compilation".to_string()));
+        assert_eq!(
+            detect_build_failure(output),
+            Some("compilation".to_string())
+        );
     }
 
     #[test]
     fn test_build_failure_detection_test() {
-        let output = "test result: FAILED. 5 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out";
+        let output =
+            "test result: FAILED. 5 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out";
         assert_eq!(detect_build_failure(output), Some("test".to_string()));
     }
 
@@ -1204,10 +1227,18 @@ mod tests {
         use catcode_core::types::ContentBlock;
         let provider = Arc::new(MockProvider::new(vec![ChatResponse {
             content: vec![
-                ContentBlock::Text { text: "Hello ".to_string() },
-                ContentBlock::Text { text: "World".to_string() },
+                ContentBlock::Text {
+                    text: "Hello ".to_string(),
+                },
+                ContentBlock::Text {
+                    text: "World".to_string(),
+                },
             ],
-            usage: TokenUsage { input_tokens: 10, output_tokens: 5, ..Default::default() },
+            usage: TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                ..Default::default()
+            },
             stop_reason: StopReason::EndTurn,
             model: "mock-model".to_string(),
         }]));
@@ -1216,16 +1247,20 @@ mod tests {
         let context = ContextStack::new("You are a helpful assistant.", "");
         let budget = TokenBudget::new(500_000, 50_000, 0.80);
 
-        let mut agent = AgentLoop::new(provider, tools, middleware, context, budget, "deepseek-chat")
-            .with_self_heal(false)
-            .with_model_routing(false)
-            .with_subagent_dispatch(false)
-            .with_auto_plan(false);
+        let mut agent = AgentLoop::new(
+            provider,
+            tools,
+            middleware,
+            context,
+            budget,
+            "deepseek-chat",
+        )
+        .with_self_heal(false)
+        .with_model_routing(false)
+        .with_subagent_dispatch(false)
+        .with_auto_plan(false);
 
-        let result = agent
-            .run("Hi", std::path::Path::new("/tmp"))
-            .await
-            .unwrap();
+        let result = agent.run("Hi", std::path::Path::new("/tmp")).await.unwrap();
 
         assert_eq!(result.response, "Hello World");
         assert_eq!(result.turns_used, 1);
@@ -1237,22 +1272,32 @@ mod tests {
         let provider = Arc::new(MockProvider::new(vec![
             ChatResponse {
                 content: vec![
-                    ContentBlock::Text { text: "Let me read the file.".to_string() },
+                    ContentBlock::Text {
+                        text: "Let me read the file.".to_string(),
+                    },
                     ContentBlock::ToolCall {
                         id: "call_1".to_string(),
                         name: "glob".to_string(),
                         args: serde_json::json!({"pattern": "*.rs"}),
                     },
                 ],
-                usage: TokenUsage { input_tokens: 15, output_tokens: 8, ..Default::default() },
+                usage: TokenUsage {
+                    input_tokens: 15,
+                    output_tokens: 8,
+                    ..Default::default()
+                },
                 stop_reason: StopReason::ToolUse,
                 model: "mock-model".to_string(),
             },
             ChatResponse {
-                content: vec![
-                    ContentBlock::Text { text: "Here are the Rust files.".to_string() },
-                ],
-                usage: TokenUsage { input_tokens: 20, output_tokens: 5, ..Default::default() },
+                content: vec![ContentBlock::Text {
+                    text: "Here are the Rust files.".to_string(),
+                }],
+                usage: TokenUsage {
+                    input_tokens: 20,
+                    output_tokens: 5,
+                    ..Default::default()
+                },
                 stop_reason: StopReason::EndTurn,
                 model: "mock-model".to_string(),
             },
@@ -1262,11 +1307,18 @@ mod tests {
         let context = ContextStack::new("You are a helpful assistant.", "");
         let budget = TokenBudget::new(500_000, 50_000, 0.80);
 
-        let mut agent = AgentLoop::new(provider, tools, middleware, context, budget, "deepseek-chat")
-            .with_self_heal(false)
-            .with_model_routing(false)
-            .with_subagent_dispatch(false)
-            .with_auto_plan(false);
+        let mut agent = AgentLoop::new(
+            provider,
+            tools,
+            middleware,
+            context,
+            budget,
+            "deepseek-chat",
+        )
+        .with_self_heal(false)
+        .with_model_routing(false)
+        .with_subagent_dispatch(false)
+        .with_auto_plan(false);
 
         let result = agent
             .run("Find Rust files", std::path::Path::new("/tmp"))
@@ -1280,7 +1332,10 @@ mod tests {
     #[test]
     fn test_build_failure_detection_compilation_error() {
         let output = "error: could not compile `catcode-daemon` (bin \"catcode-daemon\" test)";
-        assert_eq!(detect_build_failure(output), Some("compilation".to_string()));
+        assert_eq!(
+            detect_build_failure(output),
+            Some("compilation".to_string())
+        );
     }
 
     #[test]

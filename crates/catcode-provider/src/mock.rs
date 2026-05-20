@@ -16,7 +16,7 @@ pub struct MockProvider {
 }
 
 impl MockProvider {
-/// Create a mock provider with no responses.
+    /// Create a mock provider with no responses.
     pub fn new(responses: Vec<ChatResponse>) -> Self {
         Self {
             responses: Arc::new(Mutex::new(responses)),

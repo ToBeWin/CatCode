@@ -41,7 +41,7 @@ pub struct SandboxExecutor {
 }
 
 impl SandboxExecutor {
-/// Create a new sandbox executor with the given policy and gate.
+    /// Create a new sandbox executor with the given policy and gate.
     pub fn new(policy: SandboxPolicy, gate: ApprovalGate) -> Self {
         Self {
             selector: SandboxSelector::new(),

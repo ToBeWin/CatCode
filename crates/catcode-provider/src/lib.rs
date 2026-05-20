@@ -54,7 +54,7 @@ pub struct ProviderRegistry {
 }
 
 impl ProviderRegistry {
-/// Create an empty provider registry.
+    /// Create an empty provider registry.
     pub fn new() -> Self {
         Self {
             providers: HashMap::new(),

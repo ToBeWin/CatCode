@@ -55,7 +55,7 @@ pub struct SubAgentSpawner {
 }
 
 impl SubAgentSpawner {
-/// Create a new sub-agent spawner.
+    /// Create a new sub-agent spawner.
     pub fn new(
         provider: Arc<dyn Provider>,
         tools: Arc<ToolRegistry>,

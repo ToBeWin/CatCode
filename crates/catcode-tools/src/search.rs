@@ -23,7 +23,7 @@ impl SearchFilesTool {
         }
     }
 
-/// Configure max matches.
+    /// Configure max matches.
     pub fn with_max_matches(max: usize) -> Self {
         Self { max_matches: max }
     }

@@ -1,8 +1,10 @@
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, bail};
 use catcode_daemon::{
-    AgentRuntime, AgentRuntimeOptions, default_system_prompt, load_config, project_dir_or_current,
+    AgentRuntime, AgentRuntimeOptions, Config, default_system_prompt, load_config,
+    project_dir_or_current,
 };
 use clap::{Parser, Subcommand};
 
@@ -56,6 +58,8 @@ enum Commands {
 enum DaemonAction {
     /// Start the daemon
     Start,
+    /// Stop the daemon started by this CLI
+    Stop,
     /// Check daemon status
     Status,
     /// Restart the daemon
@@ -70,6 +74,26 @@ enum SessionAction {
     Create {
         /// Session name
         name: String,
+    },
+    /// Show audit log entries for a session
+    Audit {
+        /// Session ID
+        id: String,
+    },
+    /// Show persisted message history for a session
+    Messages {
+        /// Session ID
+        id: String,
+    },
+    /// Show aggregated token usage for a session
+    Usage {
+        /// Session ID
+        id: String,
+    },
+    /// Show a recovery plan for a session
+    Recovery {
+        /// Session ID
+        id: String,
     },
 }
 
@@ -328,15 +352,17 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Daemon { action } => match action {
             DaemonAction::Start => {
-                println!("Starting CatCode daemon...");
-                println!("Use 'catcode-daemon' binary directly, or run the TUI via 'catcode-tui'.");
+                start_daemon_process().await?;
+            }
+            DaemonAction::Stop => {
+                stop_daemon_process().await?;
             }
             DaemonAction::Status => {
                 print_daemon_status().await?;
             }
             DaemonAction::Restart => {
-                println!("Restarting CatCode daemon...");
-                println!("Use 'catcode-daemon' binary directly, or run the TUI via 'catcode-tui'.");
+                let _ = stop_daemon_process().await;
+                start_daemon_process().await?;
             }
         },
         Commands::Session { action } => match action {
@@ -345,6 +371,18 @@ async fn main() -> anyhow::Result<()> {
             }
             SessionAction::Create { name } => {
                 create_remote_session(name).await?;
+            }
+            SessionAction::Audit { id } => {
+                show_session_audit(id).await?;
+            }
+            SessionAction::Messages { id } => {
+                show_session_messages(id).await?;
+            }
+            SessionAction::Usage { id } => {
+                show_session_usage(id).await?;
+            }
+            SessionAction::Recovery { id } => {
+                show_session_recovery(id).await?;
             }
         },
         Commands::Run {
@@ -365,8 +403,12 @@ async fn main() -> anyhow::Result<()> {
             println!();
             println!("Commands:");
             println!("  init                           Interactive config generation");
-            println!("  daemon start|status|restart    Manage the background daemon");
-            println!("  session list|create <name>     Manage agent sessions");
+            println!("  daemon start|stop|status|restart");
+            println!("                                 Manage the background daemon");
+            println!(
+                "  session list|create <name>|audit <id>|messages <id>|usage <id>|recovery <id>"
+            );
+            println!("                                 Manage agent sessions");
             println!("  run <message>                  Run non-interactive agent");
             println!("  version                        Print version");
             println!("  help                           Print this help");
@@ -446,6 +488,102 @@ async fn print_daemon_status() -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn start_daemon_process() -> anyhow::Result<()> {
+    let base = api_base_url()?;
+    if daemon_health_ok(&base).await {
+        println!("CatCode daemon already running at {base}");
+        return Ok(());
+    }
+
+    let daemon_bin = find_daemon_binary()?;
+    let mut child = Command::new(&daemon_bin)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("failed to start {}", daemon_bin.display()))?;
+
+    for _ in 0..30 {
+        if daemon_health_ok(&base).await {
+            write_daemon_pid(child.id())?;
+            println!("CatCode daemon started at {base} (pid {})", child.id());
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    bail!(
+        "started {} but health check did not become ready at {base}",
+        daemon_bin.display()
+    )
+}
+
+async fn stop_daemon_process() -> anyhow::Result<()> {
+    let pid_path = daemon_pid_path()?;
+    let pid = std::fs::read_to_string(&pid_path)
+        .with_context(|| format!("no daemon pid file found at {}", pid_path.display()))?
+        .trim()
+        .parse::<u32>()
+        .with_context(|| format!("invalid daemon pid in {}", pid_path.display()))?;
+
+    let status = Command::new("kill")
+        .arg(pid.to_string())
+        .status()
+        .with_context(|| format!("failed to signal daemon pid {pid}"))?;
+
+    if !status.success() {
+        bail!("failed to stop daemon pid {pid}");
+    }
+
+    let base = api_base_url()?;
+    for _ in 0..30 {
+        if !daemon_health_ok(&base).await {
+            let _ = std::fs::remove_file(&pid_path);
+            println!("CatCode daemon stopped (pid {pid})");
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    bail!("sent stop signal to daemon pid {pid}, but health check is still responding at {base}")
+}
+
+async fn daemon_health_ok(base: &str) -> bool {
+    let url = format!("{base}/api/v1/health");
+    match reqwest::get(url).await {
+        Ok(resp) => resp.status().is_success(),
+        Err(_) => false,
+    }
+}
+
+fn find_daemon_binary() -> anyhow::Result<PathBuf> {
+    let current_exe = std::env::current_exe().context("failed to resolve current executable")?;
+    if let Some(dir) = current_exe.parent() {
+        let sibling = dir.join("catcode-daemon");
+        if sibling.exists() {
+            return Ok(sibling);
+        }
+    }
+
+    Ok(PathBuf::from("catcode-daemon"))
+}
+
+fn write_daemon_pid(pid: u32) -> anyhow::Result<()> {
+    let pid_path = daemon_pid_path()?;
+    if let Some(parent) = pid_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(pid_path, pid.to_string())?;
+    Ok(())
+}
+
+fn daemon_pid_path() -> anyhow::Result<PathBuf> {
+    let project_dir = std::env::current_dir().context("failed to resolve project directory")?;
+    Ok(Config::data_dir(&project_dir).join("daemon.pid"))
+}
+
 async fn list_remote_sessions() -> anyhow::Result<()> {
     let base = api_base_url()?;
     let url = format!("{base}/api/v1/sessions");
@@ -515,6 +653,169 @@ async fn create_remote_session(name: String) -> anyhow::Result<()> {
         data["provider_id"].as_str().unwrap_or("?"),
         data["model_id"].as_str().unwrap_or("?")
     );
+    Ok(())
+}
+
+async fn show_session_audit(id: String) -> anyhow::Result<()> {
+    let base = api_base_url()?;
+    let url = format!("{base}/api/v1/sessions/{id}/audit");
+    let value = reqwest::get(&url)
+        .await
+        .with_context(|| format!("failed to connect to CatCode daemon at {url}"))?
+        .error_for_status()
+        .with_context(|| format!("CatCode daemon returned an error for {url}"))?
+        .json::<serde_json::Value>()
+        .await?;
+
+    if !value["ok"].as_bool().unwrap_or(false) {
+        bail!("failed to fetch audit log: {}", value["error"]);
+    }
+
+    let Some(entries) = value["data"].as_array() else {
+        bail!("unexpected audit response: {value}");
+    };
+
+    if entries.is_empty() {
+        println!("No audit log entries for session {id}.");
+        return Ok(());
+    }
+
+    println!("Audit log for session {id}:");
+    for entry in entries {
+        let tool = entry["tool"].as_str().unwrap_or("-");
+        let level = entry["level"].as_str().unwrap_or("unknown");
+        let operation = entry["operation"].as_str().unwrap_or("operation");
+        let result = entry["result"].as_str().unwrap_or("unknown");
+        let created_at = entry["created_at"].as_str().unwrap_or("-");
+        println!("  {created_at}  {level:<9}  {operation:<10}  {tool:<16}  {result}");
+    }
+
+    Ok(())
+}
+
+async fn show_session_messages(id: String) -> anyhow::Result<()> {
+    let base = api_base_url()?;
+    let url = format!("{base}/api/v1/sessions/{id}/messages");
+    let value = reqwest::get(&url)
+        .await
+        .with_context(|| format!("failed to connect to CatCode daemon at {url}"))?
+        .error_for_status()
+        .with_context(|| format!("CatCode daemon returned an error for {url}"))?
+        .json::<serde_json::Value>()
+        .await?;
+
+    if !value["ok"].as_bool().unwrap_or(false) {
+        bail!("failed to fetch messages: {}", value["error"]);
+    }
+
+    let Some(messages) = value["data"].as_array() else {
+        bail!("unexpected messages response: {value}");
+    };
+
+    if messages.is_empty() {
+        println!("No persisted messages for session {id}.");
+        return Ok(());
+    }
+
+    println!("Messages for session {id}:");
+    for message in messages {
+        let role = message["role"].as_str().unwrap_or("unknown");
+        let created_at = message["created_at"].as_str().unwrap_or("-");
+        let content = message["content"].as_str().unwrap_or("");
+        println!("\n[{created_at}] {role}");
+        println!("{}", content.trim());
+    }
+
+    Ok(())
+}
+
+async fn show_session_usage(id: String) -> anyhow::Result<()> {
+    let base = api_base_url()?;
+    let url = format!("{base}/api/v1/sessions/{id}/usage");
+    let value = reqwest::get(&url)
+        .await
+        .with_context(|| format!("failed to connect to CatCode daemon at {url}"))?
+        .error_for_status()
+        .with_context(|| format!("CatCode daemon returned an error for {url}"))?
+        .json::<serde_json::Value>()
+        .await?;
+
+    if !value["ok"].as_bool().unwrap_or(false) {
+        bail!("failed to fetch usage: {}", value["error"]);
+    }
+
+    let data = &value["data"];
+    println!("Usage for session {id}:");
+    println!(
+        "  input={} output={} cache={} total={} cost=${:.6}",
+        data["input_tokens"].as_i64().unwrap_or(0),
+        data["output_tokens"].as_i64().unwrap_or(0),
+        data["cache_read_tokens"].as_i64().unwrap_or(0),
+        data["total_tokens"].as_i64().unwrap_or(0),
+        data["cost_usd"].as_f64().unwrap_or(0.0),
+    );
+
+    Ok(())
+}
+
+async fn show_session_recovery(id: String) -> anyhow::Result<()> {
+    let base = api_base_url()?;
+    let url = format!("{base}/api/v1/sessions/{id}/recovery");
+    let value = reqwest::get(&url)
+        .await
+        .with_context(|| format!("failed to connect to CatCode daemon at {url}"))?
+        .error_for_status()
+        .with_context(|| format!("CatCode daemon returned an error for {url}"))?
+        .json::<serde_json::Value>()
+        .await?;
+
+    if !value["ok"].as_bool().unwrap_or(false) {
+        bail!("failed to fetch recovery plan: {}", value["error"]);
+    }
+
+    let data = &value["data"];
+    println!(
+        "Recovery plan for session {}:",
+        data["session_id"].as_str().unwrap_or(&id)
+    );
+    println!(
+        "  state={} total_tokens={}",
+        data["state"].as_str().unwrap_or("unknown"),
+        data["usage"]["total_tokens"].as_i64().unwrap_or(0)
+    );
+    if let Some(reason) = data["failure_reason"].as_str() {
+        println!("  failure={reason}");
+    }
+    println!();
+    println!(
+        "{}",
+        data["summary"].as_str().unwrap_or("No summary available.")
+    );
+
+    if let Some(steps) = data["next_steps"].as_array()
+        && !steps.is_empty()
+    {
+        println!();
+        println!("Next steps:");
+        for (idx, step) in steps.iter().enumerate() {
+            println!("  {}. {}", idx + 1, step.as_str().unwrap_or(""));
+        }
+    }
+
+    if let Some(messages) = data["recent_messages"].as_array()
+        && !messages.is_empty()
+    {
+        println!();
+        println!("Recent messages:");
+        for message in messages {
+            println!(
+                "  [{}] {}",
+                message["role"].as_str().unwrap_or("unknown"),
+                message["content"].as_str().unwrap_or("").trim()
+            );
+        }
+    }
+
     Ok(())
 }
 

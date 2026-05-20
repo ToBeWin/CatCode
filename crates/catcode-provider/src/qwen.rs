@@ -250,7 +250,7 @@ pub struct QwenProvider {
 }
 
 impl QwenProvider {
-/// Create a new Qwen provider.
+    /// Create a new Qwen provider.
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,

@@ -10,16 +10,16 @@ use crate::session_manager::SessionManager;
 #[derive(Debug, Clone)]
 pub enum SessionCommand {
     /// Send a user message to the agent.
-/// [`SendMessage`].
+    /// [`SendMessage`].
     SendMessage(String),
     /// Pause the agent.
-/// [`Pause`].
+    /// [`Pause`].
     Pause,
     /// Resume a paused agent.
-/// [`Resume`].
+    /// [`Resume`].
     Resume,
     /// Cancel the agent.
-/// [`Cancel`].
+    /// [`Cancel`].
     Cancel,
 }
 
@@ -27,32 +27,32 @@ pub enum SessionCommand {
 #[derive(Debug, Clone)]
 pub enum SessionEvent {
     /// Agent produced text output.
-/// [`AgentMessage`].
+    /// [`AgentMessage`].
     AgentMessage(String),
     /// Agent is calling a tool.
-/// [`ToolCall`].
+    /// [`ToolCall`].
     ToolCall {
         tool: String,
         args: serde_json::Value,
     },
     /// Tool execution completed.
-/// [`ToolResult`].
+    /// [`ToolResult`].
     ToolResult {
         tool: String,
         output: String,
         is_error: bool,
     },
     /// Agent finished processing.
-/// [`Completed`].
+    /// [`Completed`].
     Completed { response: String },
     /// Agent encountered an error.
-/// [`Error`].
+    /// [`Error`].
     Error(String),
     /// Token usage update.
-/// [`TokenUpdate`].
+    /// [`TokenUpdate`].
     TokenUpdate { input: u64, output: u64, cache: u64 },
     /// Agent is waiting for input.
-/// [`WaitingForInput`].
+    /// [`WaitingForInput`].
     WaitingForInput,
 }
 
@@ -83,7 +83,7 @@ pub struct ConcurrentSessionManager {
 }
 
 impl ConcurrentSessionManager {
-/// Create a new concurrent session manager.
+    /// Create a new concurrent session manager.
     pub fn new(max_concurrent: usize) -> Self {
         Self {
             inner: Arc::new(RwLock::new(SessionManager::new(max_concurrent))),

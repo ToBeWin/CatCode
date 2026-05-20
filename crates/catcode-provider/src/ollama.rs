@@ -246,7 +246,7 @@ pub struct OllamaProvider {
 }
 
 impl OllamaProvider {
-/// Create a new Ollama provider.
+    /// Create a new Ollama provider.
     pub fn new(base_url: String) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -368,9 +368,10 @@ impl Provider for OllamaProvider {
             };
         }
 
-        let ollama_resp: OllamaResponse = resp.json().await.map_err(|e| {
-            ProviderError::RequestFailed(format!("Failed to parse response: {e}"))
-        })?;
+        let ollama_resp: OllamaResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::RequestFailed(format!("Failed to parse response: {e}")))?;
 
         convert_response(ollama_resp, &request.model)
     }
@@ -706,6 +707,9 @@ mod tests {
     #[test]
     fn test_ollama_url_construction() {
         let provider = OllamaProvider::new("http://localhost:11434/".to_string());
-        assert_eq!(provider.chat_url(), "http://localhost:11434/v1/chat/completions");
+        assert_eq!(
+            provider.chat_url(),
+            "http://localhost:11434/v1/chat/completions"
+        );
     }
 }

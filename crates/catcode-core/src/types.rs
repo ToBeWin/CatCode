@@ -8,13 +8,13 @@ use std::ops::Add;
 #[serde(rename_all = "lowercase")]
 /// [`Role`]
 pub enum Role {
-/// [`System`].
+    /// [`System`].
     System,
-/// [`User`].
+    /// [`User`].
     User,
-/// [`Assistant`].
+    /// [`Assistant`].
     Assistant,
-/// [`Tool`].
+    /// [`Tool`].
     Tool,
 }
 
@@ -44,7 +44,7 @@ impl Message {
         }
     }
 
-/// Assistant.
+    /// Assistant.
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
             role: Role::Assistant,
@@ -55,7 +55,7 @@ impl Message {
         }
     }
 
-/// Assistant with tool calls.
+    /// Assistant with tool calls.
     pub fn assistant_with_tool_calls(
         content: impl Into<String>,
         tool_calls: Vec<ToolCall>,
@@ -69,7 +69,7 @@ impl Message {
         }
     }
 
-/// Tool result.
+    /// Tool result.
     pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             role: Role::Tool,
@@ -80,7 +80,7 @@ impl Message {
         }
     }
 
-/// System.
+    /// System.
     pub fn system(content: impl Into<String>) -> Self {
         Self {
             role: Role::System,
@@ -108,20 +108,16 @@ pub struct ToolCall {
 #[serde(tag = "type", rename_all = "snake_case")]
 /// [`ContentBlock`]
 pub enum ContentBlock {
-/// [`Text`].
-    Text {
-        text: String,
-    },
-/// [`ToolCall`].
+    /// [`Text`].
+    Text { text: String },
+    /// [`ToolCall`].
     ToolCall {
         id: String,
         name: String,
         args: serde_json::Value,
     },
-/// [`Thinking`].
-    Thinking {
-        text: String,
-    },
+    /// [`Thinking`].
+    Thinking { text: String },
 }
 
 impl ContentBlock {
@@ -129,17 +125,17 @@ impl ContentBlock {
         matches!(self, Self::Text { .. })
     }
 
-/// Check if tool call.
+    /// Check if tool call.
     pub fn is_tool_call(&self) -> bool {
         matches!(self, Self::ToolCall { .. })
     }
 
-/// Check if thinking.
+    /// Check if thinking.
     pub fn is_thinking(&self) -> bool {
         matches!(self, Self::Thinking { .. })
     }
 
-/// Text content.
+    /// Text content.
     pub fn text_content(&self) -> Option<&str> {
         match self {
             Self::Text { text } | Self::Thinking { text } => Some(text),
@@ -164,7 +160,7 @@ impl TokenUsage {
         self.input_tokens + self.output_tokens
     }
 
-/// Cache savings ratio.
+    /// Cache savings ratio.
     pub fn cache_savings_ratio(&self) -> f64 {
         let total_input = self.input_tokens + self.cache_read_tokens;
         if total_input == 0 {
@@ -194,13 +190,13 @@ impl Add for TokenUsage {
 #[serde(rename_all = "snake_case")]
 /// [`StopReason`]
 pub enum StopReason {
-/// [`EndTurn`].
+    /// [`EndTurn`].
     EndTurn,
-/// [`MaxTokens`].
+    /// [`MaxTokens`].
     MaxTokens,
-/// [`ToolUse`].
+    /// [`ToolUse`].
     ToolUse,
-/// [`StopSequence`].
+    /// [`StopSequence`].
     StopSequence,
 }
 
@@ -253,12 +249,12 @@ impl ChatResponse {
             .join("")
     }
 
-/// Check if tool calls exists.
+    /// Check if tool calls exists.
     pub fn has_tool_calls(&self) -> bool {
         self.content.iter().any(|b| b.is_tool_call())
     }
 
-/// Get the tool calls.
+    /// Get the tool calls.
     pub fn get_tool_calls(&self) -> Vec<(String, String, serde_json::Value)> {
         self.content
             .iter()
@@ -476,7 +472,9 @@ mod tests {
 
     #[test]
     fn test_content_block_empty_text() {
-        let block = ContentBlock::Text { text: String::new() };
+        let block = ContentBlock::Text {
+            text: String::new(),
+        };
         assert!(block.is_text());
         assert_eq!(block.text_content(), Some(""));
     }
@@ -494,7 +492,9 @@ mod tests {
 
     #[test]
     fn test_content_block_thinking_empty() {
-        let block = ContentBlock::Thinking { text: String::new() };
+        let block = ContentBlock::Thinking {
+            text: String::new(),
+        };
         assert!(block.is_thinking());
         assert_eq!(block.text_content(), Some(""));
     }

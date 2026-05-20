@@ -5,7 +5,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::{ApiSession, AppState};
+use crate::{ApiSession, AppState, AuditLogEntry, MessageEntry, RecoveryPlan, UsageSummary};
 
 /// Session management routes.
 pub fn session_routes() -> Router<AppState> {
@@ -15,6 +15,10 @@ pub fn session_routes() -> Router<AppState> {
             "/api/v1/sessions/{id}",
             get(get_session).delete(delete_session),
         )
+        .route("/api/v1/sessions/{id}/audit", get(get_session_audit))
+        .route("/api/v1/sessions/{id}/messages", get(get_session_messages))
+        .route("/api/v1/sessions/{id}/recovery", get(get_session_recovery))
+        .route("/api/v1/sessions/{id}/usage", get(get_session_usage))
         .route("/api/v1/sessions/{id}/message", post(send_message))
         .route("/api/v1/sessions/{id}/pause", post(pause_session))
         .route("/api/v1/sessions/{id}/resume", post(resume_session))
@@ -207,6 +211,177 @@ async fn delete_session(
     }
 }
 
+/// List audit log entries for a session.
+async fn get_session_audit(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    if let Some(store) = state.store.clone() {
+        return match store.get_session(&id).await {
+            Ok(Some(_)) => match store.list_audit_log(&id).await {
+                Ok(entries) => Json(ApiResponse::<Vec<AuditLogEntry>>::success(entries)),
+                Err(err) => Json(ApiResponse::<Vec<AuditLogEntry>>::error(format!(
+                    "Failed to list audit log: {}",
+                    err
+                ))),
+            },
+            Ok(None) => Json(ApiResponse::<Vec<AuditLogEntry>>::error(format!(
+                "Session not found: {}",
+                id
+            ))),
+            Err(err) => Json(ApiResponse::<Vec<AuditLogEntry>>::error(format!(
+                "Failed to get session: {}",
+                err
+            ))),
+        };
+    }
+
+    if state.sessions.read().await.contains_key(&id) {
+        Json(ApiResponse::<Vec<AuditLogEntry>>::success(Vec::new()))
+    } else {
+        Json(ApiResponse::<Vec<AuditLogEntry>>::error(format!(
+            "Session not found: {}",
+            id
+        )))
+    }
+}
+
+/// List persisted messages for a session.
+async fn get_session_messages(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    if let Some(store) = state.store.clone() {
+        return match store.get_session(&id).await {
+            Ok(Some(_)) => match store.list_messages(&id).await {
+                Ok(entries) => Json(ApiResponse::<Vec<MessageEntry>>::success(entries)),
+                Err(err) => Json(ApiResponse::<Vec<MessageEntry>>::error(format!(
+                    "Failed to list messages: {}",
+                    err
+                ))),
+            },
+            Ok(None) => Json(ApiResponse::<Vec<MessageEntry>>::error(format!(
+                "Session not found: {}",
+                id
+            ))),
+            Err(err) => Json(ApiResponse::<Vec<MessageEntry>>::error(format!(
+                "Failed to get session: {}",
+                err
+            ))),
+        };
+    }
+
+    if state.sessions.read().await.contains_key(&id) {
+        Json(ApiResponse::<Vec<MessageEntry>>::success(Vec::new()))
+    } else {
+        Json(ApiResponse::<Vec<MessageEntry>>::error(format!(
+            "Session not found: {}",
+            id
+        )))
+    }
+}
+
+/// Get aggregated token usage for a session.
+async fn get_session_usage(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    if let Some(store) = state.store.clone() {
+        return match store.get_session(&id).await {
+            Ok(Some(_)) => match store.get_usage(&id).await {
+                Ok(usage) => Json(ApiResponse::<UsageSummary>::success(usage)),
+                Err(err) => Json(ApiResponse::<UsageSummary>::error(format!(
+                    "Failed to get usage: {}",
+                    err
+                ))),
+            },
+            Ok(None) => Json(ApiResponse::<UsageSummary>::error(format!(
+                "Session not found: {}",
+                id
+            ))),
+            Err(err) => Json(ApiResponse::<UsageSummary>::error(format!(
+                "Failed to get session: {}",
+                err
+            ))),
+        };
+    }
+
+    if state.sessions.read().await.contains_key(&id) {
+        Json(ApiResponse::<UsageSummary>::success(UsageSummary::default()))
+    } else {
+        Json(ApiResponse::<UsageSummary>::error(format!(
+            "Session not found: {}",
+            id
+        )))
+    }
+}
+
+/// Build a recovery plan from persisted session state.
+async fn get_session_recovery(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    if let Some(store) = state.store.clone() {
+        return match store.get_session(&id).await {
+            Ok(Some(session)) => {
+                let messages = match store.list_messages(&id).await {
+                    Ok(messages) => messages,
+                    Err(err) => {
+                        return Json(ApiResponse::<RecoveryPlan>::error(format!(
+                            "Failed to list messages: {}",
+                            err
+                        )));
+                    }
+                };
+                let audit = match store.list_audit_log(&id).await {
+                    Ok(audit) => audit,
+                    Err(err) => {
+                        return Json(ApiResponse::<RecoveryPlan>::error(format!(
+                            "Failed to list audit log: {}",
+                            err
+                        )));
+                    }
+                };
+                let usage = match store.get_usage(&id).await {
+                    Ok(usage) => usage,
+                    Err(err) => {
+                        return Json(ApiResponse::<RecoveryPlan>::error(format!(
+                            "Failed to get usage: {}",
+                            err
+                        )));
+                    }
+                };
+
+                Json(ApiResponse::<RecoveryPlan>::success(build_recovery_plan(
+                    &session, messages, audit, usage,
+                )))
+            }
+            Ok(None) => Json(ApiResponse::<RecoveryPlan>::error(format!(
+                "Session not found: {}",
+                id
+            ))),
+            Err(err) => Json(ApiResponse::<RecoveryPlan>::error(format!(
+                "Failed to get session: {}",
+                err
+            ))),
+        };
+    }
+
+    if let Some(session) = state.sessions.read().await.get(&id).cloned() {
+        Json(ApiResponse::<RecoveryPlan>::success(build_recovery_plan(
+            &session,
+            Vec::new(),
+            Vec::new(),
+            UsageSummary::default(),
+        )))
+    } else {
+        Json(ApiResponse::<RecoveryPlan>::error(format!(
+            "Session not found: {}",
+            id
+        )))
+    }
+}
+
 /// Send a message to a session.
 async fn send_message(
     State(state): State<AppState>,
@@ -234,7 +409,7 @@ async fn send_message(
     });
 
     if let Some(runner) = state.runner.clone() {
-        let session_for_usage = session.clone();
+        let mut session_for_usage = session.clone();
         match runner.run_message(session, req.content.clone()).await {
             Ok(result) => {
                 let _ = state.event_tx.send(crate::ApiEvent::AgentMessage {
@@ -280,13 +455,25 @@ async fn send_message(
                 })));
             }
             Err(err) => {
+                let error = err.to_string();
+                session_for_usage.state = format!("failed:{}", truncate_error(&error));
+                persist_session_state(&state, session_for_usage).await;
                 let _ = state.event_tx.send(crate::ApiEvent::Error {
                     session_id: Some(id.clone()),
-                    error: err.to_string(),
+                    error: error.clone(),
                 });
+                let _ = state.event_tx.send(crate::ApiEvent::SessionState {
+                    session_id: id.clone(),
+                    state: "failed".to_string(),
+                });
+                if let Some(store) = state.store.clone()
+                    && let Err(store_err) = store.insert_message(&id, "error", &error, None).await
+                {
+                    tracing::warn!(error = %store_err, session_id = %id, "Failed to persist agent error message");
+                }
                 return Json(ApiResponse::<serde_json::Value>::error(format!(
                     "agent execution failed: {}",
-                    err
+                    error
                 )));
             }
         }
@@ -359,6 +546,88 @@ async fn persist_session_state(state: &AppState, session: ApiSession) {
     }
 }
 
+fn truncate_error(error: &str) -> String {
+    const MAX_ERROR_STATE_LEN: usize = 512;
+    let mut truncated = String::new();
+    for ch in error.chars().take(MAX_ERROR_STATE_LEN) {
+        truncated.push(ch);
+    }
+    truncated
+}
+
+fn build_recovery_plan(
+    session: &ApiSession,
+    messages: Vec<MessageEntry>,
+    audit: Vec<AuditLogEntry>,
+    usage: UsageSummary,
+) -> RecoveryPlan {
+    let failure_reason = session
+        .state
+        .strip_prefix("failed:")
+        .map(|reason| reason.trim().to_string())
+        .filter(|reason| !reason.is_empty());
+    let mut next_steps = Vec::new();
+
+    if let Some(reason) = failure_reason.as_deref() {
+        next_steps.push(format!("Review the failure reason: {reason}"));
+        next_steps
+            .push("Inspect recent messages to identify the last successful intent.".to_string());
+        next_steps.push(
+            "Run `catcode session messages <id>` and retry with a smaller, scoped prompt."
+                .to_string(),
+        );
+        next_steps.push("Run `catcode session usage <id>` before retrying long tasks.".to_string());
+        next_steps.push(
+            "Use `catcode session audit <id>` before continuing if tools changed files."
+                .to_string(),
+        );
+    } else if session.state == "paused" {
+        next_steps.push("Resume the session when ready.".to_string());
+        next_steps.push("Review recent messages before sending the next instruction.".to_string());
+    } else {
+        next_steps.push("Continue with a focused next instruction.".to_string());
+        next_steps
+            .push("Review messages, audit, and usage if behavior looks unexpected.".to_string());
+    }
+
+    if audit
+        .iter()
+        .any(|entry| matches!(entry.level.as_str(), "sensitive" | "dangerous"))
+    {
+        next_steps.push("Review sensitive or dangerous audit entries before retrying.".to_string());
+    }
+
+    if usage.total_tokens > 100_000 {
+        next_steps.push(
+            "Consider summarizing context before continuing; token usage is high.".to_string(),
+        );
+    }
+
+    let mut recent_messages: Vec<MessageEntry> = messages.into_iter().rev().take(5).collect();
+    recent_messages.reverse();
+    let summary = if let Some(reason) = failure_reason.as_deref() {
+        format!(
+            "Session failed after {} turn(s): {reason}",
+            session.turn_count
+        )
+    } else {
+        format!(
+            "Session is {} after {} turn(s).",
+            session.state, session.turn_count
+        )
+    };
+
+    RecoveryPlan {
+        session_id: session.id.clone(),
+        state: session.state.clone(),
+        failure_reason,
+        summary,
+        next_steps,
+        recent_messages,
+        usage,
+    }
+}
+
 impl From<&ApiSession> for SessionResponse {
     fn from(session: &ApiSession) -> Self {
         Self {
@@ -392,15 +661,69 @@ async fn version() -> impl IntoResponse {
 async fn list_providers() -> impl IntoResponse {
     Json(ApiResponse::success(vec![
         serde_json::json!({
+            "id": "mock",
+            "name": "Mock",
+            "models": ["mock-model"],
+            "status": "available"
+        }),
+        serde_json::json!({
+            "id": "ollama",
+            "name": "Ollama",
+            "models": ["llama3.1", "qwen2.5", "codellama"],
+            "status": "available"
+        }),
+        serde_json::json!({
             "id": "deepseek",
             "name": "DeepSeek",
             "models": ["deepseek-chat", "deepseek-reasoner"],
             "status": "available"
         }),
         serde_json::json!({
+            "id": "openai",
+            "name": "OpenAI",
+            "models": ["gpt-4o", "gpt-4o-mini", "gpt-4.1"],
+            "status": "available"
+        }),
+        serde_json::json!({
             "id": "anthropic",
             "name": "Anthropic",
-            "models": ["claude-sonnet-4", "claude-opus-4"],
+            "models": ["claude-sonnet-4-20250514", "claude-haiku-3-5"],
+            "status": "available"
+        }),
+        serde_json::json!({
+            "id": "google",
+            "name": "Google Gemini",
+            "models": ["gemini-2.0-flash", "gemini-2.5-pro"],
+            "status": "available"
+        }),
+        serde_json::json!({
+            "id": "openrouter",
+            "name": "OpenRouter",
+            "models": ["openrouter/auto"],
+            "status": "available"
+        }),
+        serde_json::json!({
+            "id": "qwen",
+            "name": "Qwen",
+            "models": ["qwen-plus", "qwen-max"],
+            "status": "available"
+        }),
+        serde_json::json!({
+            "id": "glm",
+            "name": "GLM",
+            "models": ["glm-4-plus"],
+            "status": "available"
+        }),
+        serde_json::json!({
+            "id": "minimax",
+            "name": "MiniMax",
+            "models": ["MiniMax-M1"],
+            "status": "available"
+        }),
+        serde_json::json!({
+            "id": "volcengine",
+            "name": "Volcengine",
+            "models": ["deepseek-v3", "deepseek-r1"],
             "status": "available"
         }),
     ]))
@@ -435,6 +758,126 @@ mod tests {
                 output_tokens: 3,
                 cache_tokens: 1,
             })
+        }
+    }
+
+    struct FailingRunner;
+
+    #[async_trait]
+    impl crate::MessageRunner for FailingRunner {
+        async fn run_message(
+            &self,
+            _session: ApiSession,
+            _message: String,
+        ) -> anyhow::Result<crate::RunMessageResult> {
+            anyhow::bail!("simulated model outage")
+        }
+    }
+
+    #[derive(Default)]
+    struct TestStore {
+        sessions: std::sync::Mutex<std::collections::HashMap<String, ApiSession>>,
+        audit: std::sync::Mutex<Vec<AuditLogEntry>>,
+        messages: std::sync::Mutex<Vec<(String, String, String)>>,
+        usage: std::sync::Mutex<std::collections::HashMap<String, UsageSummary>>,
+    }
+
+    #[async_trait]
+    impl crate::SessionStore for TestStore {
+        async fn list_sessions(&self) -> anyhow::Result<Vec<ApiSession>> {
+            Ok(self.sessions.lock().unwrap().values().cloned().collect())
+        }
+
+        async fn get_session(&self, id: &str) -> anyhow::Result<Option<ApiSession>> {
+            Ok(self.sessions.lock().unwrap().get(id).cloned())
+        }
+
+        async fn upsert_session(&self, session: ApiSession) -> anyhow::Result<()> {
+            self.sessions
+                .lock()
+                .unwrap()
+                .insert(session.id.clone(), session);
+            Ok(())
+        }
+
+        async fn delete_session(&self, id: &str) -> anyhow::Result<()> {
+            self.sessions.lock().unwrap().remove(id);
+            Ok(())
+        }
+
+        async fn insert_message(
+            &self,
+            session_id: &str,
+            role: &str,
+            content: &str,
+            _token_count: Option<i64>,
+        ) -> anyhow::Result<()> {
+            self.messages.lock().unwrap().push((
+                session_id.to_string(),
+                role.to_string(),
+                content.to_string(),
+            ));
+            Ok(())
+        }
+
+        async fn list_messages(&self, session_id: &str) -> anyhow::Result<Vec<MessageEntry>> {
+            Ok(self
+                .messages
+                .lock()
+                .unwrap()
+                .iter()
+                .enumerate()
+                .filter(|(_, (id, _, _))| id == session_id)
+                .map(|(idx, (id, role, content))| MessageEntry {
+                    id: idx as i64 + 1,
+                    session_id: id.clone(),
+                    role: role.clone(),
+                    content: content.clone(),
+                    token_count: None,
+                    created_at: "2026-05-20T00:00:00Z".to_string(),
+                })
+                .collect())
+        }
+
+        async fn record_token_usage(
+            &self,
+            session: &ApiSession,
+            input_tokens: u64,
+            output_tokens: u64,
+            cache_tokens: u64,
+        ) -> anyhow::Result<()> {
+            self.usage.lock().unwrap().insert(
+                session.id.clone(),
+                UsageSummary {
+                    input_tokens: input_tokens as i64,
+                    output_tokens: output_tokens as i64,
+                    cache_read_tokens: cache_tokens as i64,
+                    total_tokens: (input_tokens + output_tokens + cache_tokens) as i64,
+                    cost_usd: 0.0,
+                },
+            );
+            Ok(())
+        }
+
+        async fn get_usage(&self, session_id: &str) -> anyhow::Result<UsageSummary> {
+            Ok(self
+                .usage
+                .lock()
+                .unwrap()
+                .get(session_id)
+                .cloned()
+                .unwrap_or_default())
+        }
+
+        async fn list_audit_log(&self, session_id: &str) -> anyhow::Result<Vec<AuditLogEntry>> {
+            Ok(self
+                .audit
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|entry| entry.session_id == session_id)
+                .cloned()
+                .collect())
         }
     }
 
@@ -684,6 +1127,12 @@ mod tests {
 
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let providers = json["data"].as_array().unwrap();
+        assert!(providers.len() >= 11);
+        assert!(providers.iter().any(|p| p["id"] == "mock"));
+        assert!(providers.iter().any(|p| p["id"] == "volcengine"));
     }
 
     #[tokio::test]
@@ -764,6 +1213,253 @@ mod tests {
         assert_eq!(json["data"]["status"].as_str().unwrap(), "completed");
         assert_eq!(json["data"]["response"].as_str().unwrap(), "ran: execute");
         assert_eq!(json["data"]["usage"]["input"].as_u64().unwrap(), 7);
+    }
+
+    #[tokio::test]
+    async fn test_send_message_failure_marks_session_failed() {
+        let store = std::sync::Arc::new(TestStore::default());
+        let state = test_state()
+            .with_store(store.clone())
+            .with_runner(std::sync::Arc::new(FailingRunner));
+        let app = crate::build_router(state);
+        let session_id = create_test_session(app.clone()).await;
+        let body = serde_json::to_string(&SendMessageRequest {
+            content: "please fail".to_string(),
+        })
+        .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/sessions/{session_id}/message"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 2048).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(!json["ok"].as_bool().unwrap());
+
+        let session = crate::SessionStore::get_session(store.as_ref(), &session_id)
+            .await
+            .unwrap()
+            .expect("session should still exist");
+        assert!(session.state.starts_with("failed:simulated model outage"));
+        assert_eq!(session.turn_count, 1);
+
+        let messages = store.messages.lock().unwrap();
+        assert!(
+            messages
+                .iter()
+                .any(|(_, role, content)| role == "error" && content == "simulated model outage")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_session_audit_from_store() {
+        let store = std::sync::Arc::new(TestStore::default());
+        crate::SessionStore::upsert_session(
+            store.as_ref(),
+            ApiSession {
+                id: "audit-s1".to_string(),
+                name: "audit".to_string(),
+                state: "running".to_string(),
+                project_dir: "/tmp".to_string(),
+                model_id: "mock-model".to_string(),
+                provider_id: "mock".to_string(),
+                turn_count: 0,
+            },
+        )
+        .await
+        .unwrap();
+        store.audit.lock().unwrap().push(AuditLogEntry {
+            id: 1,
+            session_id: "audit-s1".to_string(),
+            operation: "tool_call".to_string(),
+            tool: Some("write_file".to_string()),
+            args: Some(r#"{"path":"README.md"}"#.to_string()),
+            level: "sensitive".to_string(),
+            approved_by: Some("auto".to_string()),
+            result: "success".to_string(),
+            created_at: "2026-05-18T00:00:00Z".to_string(),
+        });
+
+        let app = crate::build_router(test_state().with_store(store));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/sessions/audit-s1/audit")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["ok"].as_bool().unwrap());
+        assert_eq!(json["data"][0]["tool"].as_str().unwrap(), "write_file");
+        assert_eq!(json["data"][0]["level"].as_str().unwrap(), "sensitive");
+    }
+
+    #[tokio::test]
+    async fn test_get_session_messages_from_store() {
+        let store = std::sync::Arc::new(TestStore::default());
+        crate::SessionStore::upsert_session(
+            store.as_ref(),
+            ApiSession {
+                id: "messages-s1".to_string(),
+                name: "messages".to_string(),
+                state: "running".to_string(),
+                project_dir: "/tmp".to_string(),
+                model_id: "mock-model".to_string(),
+                provider_id: "mock".to_string(),
+                turn_count: 1,
+            },
+        )
+        .await
+        .unwrap();
+        crate::SessionStore::insert_message(store.as_ref(), "messages-s1", "user", "hello", None)
+            .await
+            .unwrap();
+        crate::SessionStore::insert_message(store.as_ref(), "messages-s1", "assistant", "hi", None)
+            .await
+            .unwrap();
+
+        let app = crate::build_router(test_state().with_store(store));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/sessions/messages-s1/messages")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["ok"].as_bool().unwrap());
+        assert_eq!(json["data"][0]["role"].as_str().unwrap(), "user");
+        assert_eq!(json["data"][1]["content"].as_str().unwrap(), "hi");
+    }
+
+    #[tokio::test]
+    async fn test_get_session_usage_from_store() {
+        let store = std::sync::Arc::new(TestStore::default());
+        let session = ApiSession {
+            id: "usage-s1".to_string(),
+            name: "usage".to_string(),
+            state: "running".to_string(),
+            project_dir: "/tmp".to_string(),
+            model_id: "mock-model".to_string(),
+            provider_id: "mock".to_string(),
+            turn_count: 1,
+        };
+        crate::SessionStore::upsert_session(store.as_ref(), session.clone())
+            .await
+            .unwrap();
+        crate::SessionStore::record_token_usage(store.as_ref(), &session, 10, 5, 2)
+            .await
+            .unwrap();
+
+        let app = crate::build_router(test_state().with_store(store));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/sessions/usage-s1/usage")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 2048).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["ok"].as_bool().unwrap());
+        assert_eq!(json["data"]["input_tokens"].as_i64().unwrap(), 10);
+        assert_eq!(json["data"]["total_tokens"].as_i64().unwrap(), 17);
+    }
+
+    #[tokio::test]
+    async fn test_get_session_recovery_from_failed_store() {
+        let store = std::sync::Arc::new(TestStore::default());
+        let session = ApiSession {
+            id: "recovery-s1".to_string(),
+            name: "recovery".to_string(),
+            state: "failed:model unavailable".to_string(),
+            project_dir: "/tmp".to_string(),
+            model_id: "mock-model".to_string(),
+            provider_id: "mock".to_string(),
+            turn_count: 2,
+        };
+        crate::SessionStore::upsert_session(store.as_ref(), session.clone())
+            .await
+            .unwrap();
+        crate::SessionStore::insert_message(store.as_ref(), &session.id, "user", "fix tests", None)
+            .await
+            .unwrap();
+        crate::SessionStore::insert_message(
+            store.as_ref(),
+            &session.id,
+            "error",
+            "model unavailable",
+            None,
+        )
+        .await
+        .unwrap();
+        crate::SessionStore::record_token_usage(store.as_ref(), &session, 100, 20, 5)
+            .await
+            .unwrap();
+
+        let app = crate::build_router(test_state().with_store(store));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/sessions/recovery-s1/recovery")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["ok"].as_bool().unwrap());
+        assert_eq!(
+            json["data"]["failure_reason"].as_str().unwrap(),
+            "model unavailable"
+        );
+        assert!(
+            json["data"]["summary"]
+                .as_str()
+                .unwrap()
+                .contains("Session failed")
+        );
+        assert_eq!(json["data"]["recent_messages"].as_array().unwrap().len(), 2);
+        assert_eq!(json["data"]["usage"]["total_tokens"].as_i64().unwrap(), 125);
+    }
+
+    #[tokio::test]
+    async fn test_get_session_audit_not_found() {
+        let app = crate::build_router(test_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/sessions/missing/audit")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 2048).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(!json["ok"].as_bool().unwrap());
     }
 
     async fn create_test_session(app: Router) -> String {

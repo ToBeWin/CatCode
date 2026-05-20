@@ -248,7 +248,7 @@ pub struct GLMProvider {
 }
 
 impl GLMProvider {
-/// Create a new GLM (Zhipu) provider.
+    /// Create a new GLM (Zhipu) provider.
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,

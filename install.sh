@@ -4,6 +4,7 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/anomalyco/CatCode/main/install.sh | bash
 #   ./install.sh [--help]
+#   ./install.sh --check
 #
 # Detects OS, checks for Rust toolchain, builds from source,
 # and installs symlinks in ~/.local/bin.
@@ -21,6 +22,7 @@ CATCODE_DIR="$(cd "$(dirname "$0")" && pwd)"
 VERSION=$(grep '^version' "$CATCODE_DIR/Cargo.toml" 2>/dev/null | head -1 | sed 's/.*= "//;s/"//' || echo "?")
 BIN_SRC="$CATCODE_DIR/target/release"
 BINS=(catcode catcode-tui catcode-daemon)
+CHECK_ONLY=false
 
 print_banner() {
   printf "\033[0;36m\n"
@@ -76,6 +78,42 @@ check_cargo() {
     return 0
   fi
   return 1
+}
+
+check_source_tree() {
+  local missing=false
+
+  for path in Cargo.toml crates/catcode-cli crates/catcode-tui crates/catcode-daemon; do
+    if [ -e "$CATCODE_DIR/$path" ]; then
+      echo -e "  ${GREEN}✓${NC} $path"
+    else
+      echo -e "  ${RED}✗${NC} Missing $path"
+      missing=true
+    fi
+  done
+
+  if [ "$missing" = true ]; then
+    return 1
+  fi
+}
+
+check_release_binaries() {
+  local missing=false
+
+  echo ""
+  echo -e "${CYAN}Checking release binaries...${NC}"
+  for bin in "${BINS[@]}"; do
+    if [ -x "$BIN_SRC/$bin" ]; then
+      echo -e "  ${GREEN}✓${NC} $BIN_SRC/$bin"
+    else
+      echo -e "  ${YELLOW}•${NC} $BIN_SRC/$bin not built yet"
+      missing=true
+    fi
+  done
+
+  if [ "$missing" = true ]; then
+    echo -e "  ${YELLOW}Run ./install.sh to build and install release binaries.${NC}"
+  fi
 }
 
 build_binaries() {
@@ -210,15 +248,30 @@ if [ "$OS" = "windows" ]; then
   echo ""
 fi
 
-# Handle --help
-if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-  echo "Usage: bash install.sh [--help]"
-  echo ""
-  echo "Environment variables:"
-  echo "  INSTALL_DIR    Target directory for symlinks (default: ~/.local/bin)"
-  echo ""
-  exit 0
-fi
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check)
+      CHECK_ONLY=true
+      shift
+      ;;
+    --help|-h)
+      echo "Usage: bash install.sh [--help] [--check]"
+      echo ""
+      echo "Options:"
+      echo "  --check        Validate prerequisites without building or writing files"
+      echo ""
+      echo "Environment variables:"
+      echo "  INSTALL_DIR    Target directory for symlinks (default: ~/.local/bin)"
+      echo ""
+      exit 0
+      ;;
+    *)
+      echo -e "${RED}Unknown option: $1${NC}"
+      echo "Usage: bash install.sh [--help] [--check]"
+      exit 1
+      ;;
+  esac
+done
 
 # Step 1: Check for Rust toolchain
 if ! check_cargo; then
@@ -232,6 +285,16 @@ if ! check_cargo; then
   echo -e "  Or manually: ${CYAN}cargo install catcode${NC}"
   echo ""
   exit 1
+fi
+
+if [ "$CHECK_ONLY" = true ]; then
+  echo ""
+  echo -e "${CYAN}Checking source tree...${NC}"
+  check_source_tree
+  check_release_binaries
+  echo ""
+  echo -e "${GREEN}✓ Install preflight complete. No files were changed.${NC}"
+  exit 0
 fi
 
 # Step 2: Build

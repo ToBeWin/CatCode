@@ -1,6 +1,5 @@
 //! Streaming agent execution events for real-time TUI/API progress display.
 
-use catcode_core::TokenUsage;
 use serde::{Deserialize, Serialize};
 
 /// Event emitted by the AgentLoop during execution for real-time progress display.
@@ -13,7 +12,11 @@ pub enum AgentStreamEvent {
     /// Tool call started
     ToolCall { tool: String, args: String },
     /// Tool execution completed with result
-    ToolResult { tool: String, output: String, is_error: bool },
+    ToolResult {
+        tool: String,
+        output: String,
+        is_error: bool,
+    },
     /// Final text response from LLM
     TextDelta(String),
     /// Token usage update

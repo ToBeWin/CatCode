@@ -6,16 +6,16 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompactTier {
     /// Level 1: Replace old tool outputs with summaries in-place (no API)
-/// [`Micro`].
+    /// [`Micro`].
     Micro,
     /// Level 2: Remove stale/irrelevant messages (no API)
-/// [`Snip`].
+    /// [`Snip`].
     Snip,
     /// Level 3: Merge consecutive read results (no API)
-/// [`Collapse`].
+    /// [`Collapse`].
     Collapse,
     /// Level 4: LLM-based full conversation summary (1 API call)
-/// [`Full`].
+    /// [`Full`].
     Full,
 }
 
@@ -54,14 +54,12 @@ impl Default for CompactConfig {
 /// | 2     | SnipCompact  | Remove user-ignored/irrelevant messages                | No        |
 /// | 3     | Collapse     | Merge consecutive reads into combined descriptions     | No        |
 /// | 4     | FullCompact  | LLM summarizes conversation history                    | Yes (1)   |
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 /// [`TieredCompactor`]
 pub struct TieredCompactor {
     pub base: ContextCompressor,
     pub config: CompactConfig,
 }
-
 
 impl TieredCompactor {
     /// Create a tiered compactor with default settings.
@@ -124,7 +122,10 @@ impl TieredCompactor {
             for (name, _) in &stack.working.recent_tool_outputs {
                 *counts.entry(name.clone()).or_insert(0) += 1;
             }
-            counts.into_iter().filter(|(_, c)| *c > 2).collect::<HashMap<String, usize>>()
+            counts
+                .into_iter()
+                .filter(|(_, c)| *c > 2)
+                .collect::<HashMap<String, usize>>()
         };
 
         if to_summarize.is_empty() {
@@ -141,7 +142,8 @@ impl TieredCompactor {
                 *count += 1;
 
                 if *count <= total - 2 {
-                    summaries.entry(name.clone())
+                    summaries
+                        .entry(name.clone())
                         .or_insert_with(|| format!("[summarized: {name} called {total} times]"));
                     continue;
                 }
@@ -150,9 +152,10 @@ impl TieredCompactor {
         }
 
         for (tool, summary) in summaries {
-            stack.working.recent_tool_outputs.push_front(
-                (tool, catcode_core::ToolResult::success(summary)),
-            );
+            stack
+                .working
+                .recent_tool_outputs
+                .push_front((tool, catcode_core::ToolResult::success(summary)));
         }
     }
 
@@ -160,28 +163,34 @@ impl TieredCompactor {
     pub fn snip_compact(&self, stack: &mut ContextStack) {
         // Trim completed_steps if too many
         if stack.session.completed_steps.len() > 20 {
-            let keep = stack.session.completed_steps.split_off(
-                stack.session.completed_steps.len() - 10,
-            );
+            let keep = stack
+                .session
+                .completed_steps
+                .split_off(stack.session.completed_steps.len() - 10);
             stack.session.completed_steps = keep;
         }
 
         // Filter tool outputs by relevance to current_files (if non-empty)
         if !stack.working.current_files.is_empty() {
-            let focus: Vec<String> = stack.working.current_files
+            let focus: Vec<String> = stack
+                .working
+                .current_files
                 .iter()
                 .map(|f| f.to_lowercase())
                 .collect();
 
-            stack.working.recent_tool_outputs.retain(|(tool_name, result)| {
-                let name_lower = tool_name.to_lowercase();
-                let output_lower = result.output.to_lowercase();
-                focus.iter().any(|keyword| {
-                    name_lower.contains(keyword)
-                        || output_lower.contains(keyword)
-                        || keyword.contains(&name_lower)
-                })
-            });
+            stack
+                .working
+                .recent_tool_outputs
+                .retain(|(tool_name, result)| {
+                    let name_lower = tool_name.to_lowercase();
+                    let output_lower = result.output.to_lowercase();
+                    focus.iter().any(|keyword| {
+                        name_lower.contains(keyword)
+                            || output_lower.contains(keyword)
+                            || keyword.contains(&name_lower)
+                    })
+                });
         }
     }
 
@@ -213,9 +222,10 @@ impl TieredCompactor {
         }
 
         let summary = format!("[collapsed: read {consecutive} files]");
-        stack.working.recent_tool_outputs.push_back(
-            ("read_file".to_string(), catcode_core::ToolResult::success(summary)),
-        );
+        stack.working.recent_tool_outputs.push_back((
+            "read_file".to_string(),
+            catcode_core::ToolResult::success(summary),
+        ));
     }
 
     /// Level 4: LLM-based conversation summary (requires 1 API call).
@@ -233,11 +243,15 @@ impl TieredCompactor {
 
         let summary = summarize(&session_text);
 
-        stack.session.key_decisions.push(
-            "Session fully compacted via LLM summary".to_string(),
-        );
+        stack
+            .session
+            .key_decisions
+            .push("Session fully compacted via LLM summary".to_string());
         stack.session.completed_steps.clear();
-        stack.session.completed_steps.push(format!("[Session Summary]\n{summary}"));
+        stack
+            .session
+            .completed_steps
+            .push(format!("[Session Summary]\n{summary}"));
     }
 
     fn should_snip(&self, stack: &ContextStack) -> bool {
@@ -379,10 +393,9 @@ impl ContextCompressor {
         );
 
         // Mark rollover in key_decisions
-        stack
-            .session
-            .key_decisions
-            .push(format!("Session history rolled over at {completed_count} steps"));
+        stack.session.key_decisions.push(format!(
+            "Session history rolled over at {completed_count} steps"
+        ));
 
         // Keep only the most critical completed steps (last 5 entries)
         if completed_count > 5 {
@@ -412,17 +425,20 @@ impl ContextCompressor {
 
         let focus_lower: Vec<String> = current_focus.iter().map(|f| f.to_lowercase()).collect();
 
-        stack.working.recent_tool_outputs.retain(|(tool_name, result)| {
-            let tool_lower = tool_name.to_lowercase();
-            let output_lower = result.output.to_lowercase();
+        stack
+            .working
+            .recent_tool_outputs
+            .retain(|(tool_name, result)| {
+                let tool_lower = tool_name.to_lowercase();
+                let output_lower = result.output.to_lowercase();
 
-            // Keep if any focus keyword matches tool name or output content
-            focus_lower.iter().any(|keyword| {
-                tool_lower.contains(keyword)
-                    || output_lower.contains(keyword)
-                    || keyword.contains(&tool_lower)
-            })
-        });
+                // Keep if any focus keyword matches tool name or output content
+                focus_lower.iter().any(|keyword| {
+                    tool_lower.contains(keyword)
+                        || output_lower.contains(keyword)
+                        || keyword.contains(&tool_lower)
+                })
+            });
     }
 }
 
@@ -654,12 +670,16 @@ mod tests {
         comp.micro_compact(&mut stack);
 
         // Should have: summary entry + last 2 read_file entries
-        let has_summary = stack.working.recent_tool_outputs
+        let has_summary = stack
+            .working
+            .recent_tool_outputs
             .iter()
             .any(|(n, r)| n == "read_file" && r.output.contains("[summarized:"));
         assert!(has_summary);
 
-        let entries: Vec<_> = stack.working.recent_tool_outputs
+        let entries: Vec<_> = stack
+            .working
+            .recent_tool_outputs
             .iter()
             .filter(|(n, _)| n == "read_file")
             .collect();
@@ -727,7 +747,12 @@ mod tests {
         assert_eq!(stack.working.recent_tool_outputs.len(), 2);
         assert_eq!(stack.working.recent_tool_outputs[0].0, "bash");
         assert_eq!(stack.working.recent_tool_outputs[1].0, "read_file");
-        assert!(stack.working.recent_tool_outputs[1].1.output.contains("[collapsed: read 3 files]"));
+        assert!(
+            stack.working.recent_tool_outputs[1]
+                .1
+                .output
+                .contains("[collapsed: read 3 files]")
+        );
     }
 
     #[test]
@@ -768,7 +793,11 @@ mod tests {
         };
         let mut stack = make_stack();
 
-        stack.add_tool_result("1", "bash", ToolResult::success("very long output that exceeds limit"));
+        stack.add_tool_result(
+            "1",
+            "bash",
+            ToolResult::success("very long output that exceeds limit"),
+        );
 
         let applied = comp.compress_tiered(&mut stack);
 
@@ -817,9 +846,18 @@ mod tests {
         let comp = make_tiered();
         let mut stack = make_stack();
 
-        stack.session.completed_steps.push("Fixed auth bug".to_string());
-        stack.session.completed_steps.push("Added JWT validation".to_string());
-        stack.session.completed_steps.push("Wrote tests".to_string());
+        stack
+            .session
+            .completed_steps
+            .push("Fixed auth bug".to_string());
+        stack
+            .session
+            .completed_steps
+            .push("Added JWT validation".to_string());
+        stack
+            .session
+            .completed_steps
+            .push("Wrote tests".to_string());
 
         comp.full_compact(&mut stack, |text| {
             format!("[LLM summary of {} chars]", text.len())
@@ -828,7 +866,13 @@ mod tests {
         assert_eq!(stack.session.completed_steps.len(), 1);
         assert!(stack.session.completed_steps[0].contains("[Session Summary]"));
         assert!(stack.session.completed_steps[0].contains("LLM summary"));
-        assert!(stack.session.key_decisions.iter().any(|d| d.contains("fully compacted")));
+        assert!(
+            stack
+                .session
+                .key_decisions
+                .iter()
+                .any(|d| d.contains("fully compacted"))
+        );
     }
 
     #[test]
@@ -844,7 +888,9 @@ mod tests {
         c.compress(&mut stack);
 
         assert_eq!(stack.working.recent_tool_outputs.len(), 2);
-        let rf = stack.working.recent_tool_outputs
+        let rf = stack
+            .working
+            .recent_tool_outputs
             .iter()
             .find(|(n, _)| n == "read_file")
             .unwrap();

@@ -7,29 +7,23 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ToolProgress {
     /// Tool started.
-/// [`Started`].
+    /// [`Started`].
     Started {
         tool_name: String,
         tool_args: serde_json::Value,
     },
     /// Partial output during execution.
-/// [`Progress`].
-    Progress {
-        tool_name: String,
-        output: String,
-    },
+    /// [`Progress`].
+    Progress { tool_name: String, output: String },
     /// Tool completed.
-/// [`Completed`].
+    /// [`Completed`].
     Completed {
         tool_name: String,
         result: ToolResult,
     },
     /// Tool failed.
-/// [`Failed`].
-    Failed {
-        tool_name: String,
-        error: String,
-    },
+    /// [`Failed`].
+    Failed { tool_name: String, error: String },
 }
 
 // === OperationLevel ===
@@ -37,11 +31,11 @@ pub enum ToolProgress {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 /// [`OperationLevel`]
 pub enum OperationLevel {
-/// [`Safe`].
+    /// [`Safe`].
     Safe,
-/// [`Sensitive`].
+    /// [`Sensitive`].
     Sensitive,
-/// [`Dangerous`].
+    /// [`Dangerous`].
     Dangerous,
 }
 
@@ -64,7 +58,7 @@ impl ToolResult {
         }
     }
 
-/// Error.
+    /// Error.
     pub fn error(output: impl Into<String>) -> Self {
         Self {
             output: output.into(),
@@ -73,7 +67,7 @@ impl ToolResult {
         }
     }
 
-/// Configure metadata.
+    /// Configure metadata.
     pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
         self.metadata = metadata;
         self
@@ -203,7 +197,10 @@ mod tests {
             dry_run: true,
         };
         assert_eq!(ctx.session_id.as_deref(), Some("sess_001"));
-        assert_eq!(ctx.project_dir.as_ref().unwrap().to_str(), Some("/home/user/project"));
+        assert_eq!(
+            ctx.project_dir.as_ref().unwrap().to_str(),
+            Some("/home/user/project")
+        );
         assert!(ctx.dry_run);
     }
 

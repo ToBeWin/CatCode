@@ -290,7 +290,7 @@ pub struct DeepSeekProvider {
 }
 
 impl DeepSeekProvider {
-/// Create a new DeepSeek provider.
+    /// Create a new DeepSeek provider.
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,
@@ -523,26 +523,26 @@ impl DeepSeekProvider {
                 let chunk = match chunk_result {
                     Ok(c) => c,
                     Err(e) => {
-                        let _ = tx.unbounded_send(Err(ProviderError::RequestFailed(
-                            format!("Stream error: {e}"),
-                        )));
+                        let _ = tx.unbounded_send(Err(ProviderError::RequestFailed(format!(
+                            "Stream error: {e}"
+                        ))));
                         return;
                     }
                 };
 
                 for &byte in &chunk {
                     if byte == b'\n' {
-                            if buffer.starts_with(b"data: ") {
+                        if buffer.starts_with(b"data: ") {
                             let data = &buffer[6..];
                             let data_str = std::str::from_utf8(data).unwrap_or("");
                             if data_str.trim() == "[DONE]" {
                                 return;
                             }
-                            if let Ok(sse_chunk) =
-                                serde_json::from_slice::<StreamChunk>(data)
-                                && let Some(chat_chunk) = convert_stream_chunk(sse_chunk) {
-                                    let _ = tx.unbounded_send(Ok(chat_chunk));
-                                }
+                            if let Ok(sse_chunk) = serde_json::from_slice::<StreamChunk>(data)
+                                && let Some(chat_chunk) = convert_stream_chunk(sse_chunk)
+                            {
+                                let _ = tx.unbounded_send(Ok(chat_chunk));
+                            }
                         }
                         buffer.clear();
                     } else if byte != b'\r' {

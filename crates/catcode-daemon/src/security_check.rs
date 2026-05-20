@@ -7,8 +7,6 @@ use std::sync::OnceLock;
 use std::time::Instant;
 use tracing::warn;
 
-
-
 // ===== Core Types =====
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,15 +50,15 @@ pub struct SecurityFinding {
 #[serde(rename_all = "lowercase")]
 /// Severity level for a security finding.
 pub enum Severity {
-/// [`Critical`].
+    /// [`Critical`].
     Critical,
-/// [`High`].
+    /// [`High`].
     High,
-/// [`Medium`].
+    /// [`Medium`].
     Medium,
-/// [`Low`].
+    /// [`Low`].
     Low,
-/// [`Info`].
+    /// [`Info`].
     Info,
 }
 
@@ -92,23 +90,23 @@ impl Ord for Severity {
 #[serde(rename_all = "snake_case")]
 /// Category of a security finding.
 pub enum FindingCategory {
-/// [`Secret`].
+    /// [`Secret`].
     Secret,
-/// [`DependencyVuln`].
+    /// [`DependencyVuln`].
     DependencyVuln,
-/// [`CodeInjection`].
+    /// [`CodeInjection`].
     CodeInjection,
-/// [`PathTraversal`].
+    /// [`PathTraversal`].
     PathTraversal,
-/// [`UnsafeCrypto`].
+    /// [`UnsafeCrypto`].
     UnsafeCrypto,
-/// [`UnsafeNetwork`].
+    /// [`UnsafeNetwork`].
     UnsafeNetwork,
-/// [`InformationDisclosure`].
+    /// [`InformationDisclosure`].
     InformationDisclosure,
-/// [`Configuration`].
+    /// [`Configuration`].
     Configuration,
-/// [`BestPractice`].
+    /// [`BestPractice`].
     BestPractice,
 }
 
@@ -134,36 +132,36 @@ impl Default for SecurityScanner {
 }
 
 impl SecurityScanner {
-/// Create a default security scanner with all checks enabled.
+    /// Create a default security scanner with all checks enabled.
     pub fn new() -> Self {
         Self::default()
     }
 
-/// Enable or disable secret scanning.
+    /// Enable or disable secret scanning.
     pub fn with_secrets(mut self, enabled: bool) -> Self {
         self.scan_secrets = enabled;
         self
     }
 
-/// Enable or disable code injection scanning.
+    /// Enable or disable code injection scanning.
     pub fn with_injection(mut self, enabled: bool) -> Self {
         self.scan_injection = enabled;
         self
     }
 
-/// Enable or disable dependency scanning.
+    /// Enable or disable dependency scanning.
     pub fn with_dependencies(mut self, enabled: bool) -> Self {
         self.scan_dependencies = enabled;
         self
     }
 
-/// Enable or disable configuration scanning.
+    /// Enable or disable configuration scanning.
     pub fn with_config(mut self, enabled: bool) -> Self {
         self.scan_config = enabled;
         self
     }
 
-/// Scan a single file for security issues.
+    /// Scan a single file for security issues.
     pub fn scan_file(&self, path: &Path) -> Vec<SecurityFinding> {
         let content = match fs::read_to_string(path) {
             Ok(c) => c,
@@ -182,7 +180,7 @@ impl SecurityScanner {
         findings
     }
 
-/// Scan an entire directory tree for security issues.
+    /// Scan an entire directory tree for security issues.
     pub fn scan_directory(&self, dir: &Path) -> SecurityReport {
         let start = Instant::now();
         let files = collect_source_files(dir);
@@ -205,11 +203,26 @@ impl SecurityScanner {
 
         let summary = SecuritySummary {
             total_findings: findings.len(),
-            critical: findings.iter().filter(|f| f.severity == Severity::Critical).count(),
-            high: findings.iter().filter(|f| f.severity == Severity::High).count(),
-            medium: findings.iter().filter(|f| f.severity == Severity::Medium).count(),
-            low: findings.iter().filter(|f| f.severity == Severity::Low).count(),
-            info: findings.iter().filter(|f| f.severity == Severity::Info).count(),
+            critical: findings
+                .iter()
+                .filter(|f| f.severity == Severity::Critical)
+                .count(),
+            high: findings
+                .iter()
+                .filter(|f| f.severity == Severity::High)
+                .count(),
+            medium: findings
+                .iter()
+                .filter(|f| f.severity == Severity::Medium)
+                .count(),
+            low: findings
+                .iter()
+                .filter(|f| f.severity == Severity::Low)
+                .count(),
+            info: findings
+                .iter()
+                .filter(|f| f.severity == Severity::Info)
+                .count(),
         };
 
         let scanned_at = chrono::Utc::now().to_rfc3339();
@@ -228,7 +241,7 @@ impl SecurityScanner {
         }
     }
 
-/// Scan dependency files for known vulnerabilities.
+    /// Scan dependency files for known vulnerabilities.
     pub fn scan_dependencies(&self, dir: &Path) -> Vec<SecurityFinding> {
         let mut findings = Vec::new();
 
@@ -248,15 +261,19 @@ impl SecurityScanner {
                             fname
                         ),
                         &path.to_string_lossy(),
-                        Some("Run `npm audit` or `yarn audit` for thorough dependency scanning.".to_string()),
+                        Some(
+                            "Run `npm audit` or `yarn audit` for thorough dependency scanning."
+                                .to_string(),
+                        ),
                     ));
                     // Also scan deps by looking for package.json in same dir
                     if let Some(parent) = path.parent() {
                         let pj = parent.join("package.json");
                         if pj.exists()
-                            && let Ok(c) = fs::read_to_string(&pj) {
-                                findings.extend(scan_package_json(&c, &pj));
-                            }
+                            && let Ok(c) = fs::read_to_string(&pj)
+                        {
+                            findings.extend(scan_package_json(&c, &pj));
+                        }
                     }
                     // Remove the info finding if we added actual vuln findings from package.json
                     if findings.len() > findings_len + 1 {
@@ -328,12 +345,14 @@ fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
             }
         } else if path.is_file()
             && let Ok(meta) = path.metadata()
-                && meta.len() > 0 && meta.len() < 5 * 1024 * 1024 {
-                    let name = path.file_name().unwrap_or_default().to_string_lossy();
-                    if !name.starts_with('.') {
-                        files.push(path);
-                    }
-                }
+            && meta.len() > 0
+            && meta.len() < 5 * 1024 * 1024
+        {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            if !name.starts_with('.') {
+                files.push(path);
+            }
+        }
     }
 }
 
@@ -363,9 +382,10 @@ fn find_dependency_files(dir: &Path) -> Vec<(PathBuf, String)> {
         } else if let Some(fname) = path.file_name() {
             let fname = fname.to_string_lossy();
             if targets.contains(&fname.as_ref())
-                && let Ok(content) = fs::read_to_string(&path) {
-                    results.push((path, content));
-                }
+                && let Ok(content) = fs::read_to_string(&path)
+            {
+                results.push((path, content));
+            }
         }
     }
 
@@ -388,7 +408,10 @@ fn pattern_aws_key() -> &'static Regex {
 }
 fn pattern_aws_secret() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r#"(?i)aws[_-]?secret[_-]?access[_-]?key\s*[:=]\s*['"][A-Za-z0-9/+=]{40}['"]"#).unwrap())
+    RE.get_or_init(|| {
+        Regex::new(r#"(?i)aws[_-]?secret[_-]?access[_-]?key\s*[:=]\s*['"][A-Za-z0-9/+=]{40}['"]"#)
+            .unwrap()
+    })
 }
 fn pattern_github_token() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -407,11 +430,15 @@ fn pattern_generic_api_key() -> &'static Regex {
 }
 fn pattern_jwt() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\beyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\b").unwrap())
+    RE.get_or_init(|| {
+        Regex::new(r"\beyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\b").unwrap()
+    })
 }
 fn pattern_private_key() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"-----BEGIN\s+(RSA|EC|DSA|OPENSSH)\s+PRIVATE\s+KEY-----").unwrap())
+    RE.get_or_init(|| {
+        Regex::new(r"-----BEGIN\s+(RSA|EC|DSA|OPENSSH)\s+PRIVATE\s+KEY-----").unwrap()
+    })
 }
 fn pattern_slack_token() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -519,7 +546,10 @@ fn detect_secrets(content: &str, path: &str) -> Vec<SecurityFinding> {
             let line = content[..cap.start()].lines().count().saturating_add(1) as u64;
 
             // Check if this looks like a test or example (heuristic)
-            let context_line = content.lines().nth(line.saturating_sub(2) as usize).unwrap_or("");
+            let context_line = content
+                .lines()
+                .nth(line.saturating_sub(2) as usize)
+                .unwrap_or("");
             if context_line.contains("EXAMPLE") || context_line.contains("example") {
                 findings.push(make_finding(
                     Severity::Info,
@@ -529,7 +559,10 @@ fn detect_secrets(content: &str, path: &str) -> Vec<SecurityFinding> {
                     path,
                     Some(line),
                     Some(cap.as_str().to_string()),
-                    Some(format!("{} If this is a real secret, rotate it immediately.", pattern.recommendation)),
+                    Some(format!(
+                        "{} If this is a real secret, rotate it immediately.",
+                        pattern.recommendation
+                    )),
                     None,
                 ));
             } else {
@@ -556,7 +589,11 @@ fn detect_secrets(content: &str, path: &str) -> Vec<SecurityFinding> {
 fn detect_code_injection(content: &str, path: &Path) -> Vec<SecurityFinding> {
     let mut findings = Vec::new();
     let file_str = path.to_string_lossy();
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
 
     for (i, line) in content.lines().enumerate() {
         let line_num = (i + 1) as u64;
@@ -646,14 +683,21 @@ fn detect_code_injection(content: &str, path: &Path) -> Vec<SecurityFinding> {
 
         // execSync in Node.js
         if (ext == "js" || ext == "ts" || ext == "jsx" || ext == "tsx")
-            && (trimmed.contains("execSync(") || trimmed.contains("exec(") && !trimmed.contains("eval(")) {
-                // Already handled by exec() above, but Node-specific note
-            }
+            && (trimmed.contains("execSync(")
+                || trimmed.contains("exec(") && !trimmed.contains("eval("))
+        {
+            // Already handled by exec() above, but Node-specific note
+        }
 
         // unsafe blocks in Rust
-        if ext == "rs" && trimmed.contains("unsafe") && !trimmed.trim_start().starts_with("//")
-            && (trimmed.contains("unsafe {") || trimmed == "unsafe" || trimmed.starts_with("unsafe ")) {
-                findings.push(make_finding(
+        if ext == "rs"
+            && trimmed.contains("unsafe")
+            && !trimmed.trim_start().starts_with("//")
+            && (trimmed.contains("unsafe {")
+                || trimmed == "unsafe"
+                || trimmed.starts_with("unsafe "))
+        {
+            findings.push(make_finding(
                     Severity::Medium,
                     FindingCategory::BestPractice,
                     "Unsafe Code Block".to_string(),
@@ -664,7 +708,7 @@ fn detect_code_injection(content: &str, path: &Path) -> Vec<SecurityFinding> {
                     Some("Minimize unsafe code. Document safety invariants in SAFETY comments. Consider safe alternatives.".to_string()),
                     None,
                 ));
-            }
+        }
 
         // dangerouslySetInnerHTML (React)
         if trimmed.contains("dangerouslySetInnerHTML") {
@@ -697,10 +741,16 @@ fn detect_code_injection(content: &str, path: &Path) -> Vec<SecurityFinding> {
         }
 
         // Raw SQL string building (contains SQL keywords with concatenation or interpolation)
-        let sql_keywords = ["SELECT ", "INSERT ", "UPDATE ", "DELETE ", "DROP ", "CREATE "];
+        let sql_keywords = [
+            "SELECT ", "INSERT ", "UPDATE ", "DELETE ", "DROP ", "CREATE ",
+        ];
         if sql_keywords.iter().any(|kw| trimmed.contains(kw))
-            && (trimmed.contains('+') || trimmed.contains('$') || trimmed.contains("format(") || trimmed.contains(".format(")) {
-                findings.push(make_finding(
+            && (trimmed.contains('+')
+                || trimmed.contains('$')
+                || trimmed.contains("format(")
+                || trimmed.contains(".format("))
+        {
+            findings.push(make_finding(
                     Severity::High,
                     FindingCategory::CodeInjection,
                     "SQL Injection Risk: Raw SQL Building".to_string(),
@@ -711,7 +761,7 @@ fn detect_code_injection(content: &str, path: &Path) -> Vec<SecurityFinding> {
                     Some("Use parameterized queries or an ORM to prevent SQL injection.".to_string()),
                     None,
                 ));
-            }
+        }
     }
 
     findings
@@ -741,14 +791,20 @@ fn detect_config_issues(dir: &Path) -> Vec<SecurityFinding> {
         let path_str = path.to_string_lossy();
 
         // .env files checked on reveal
-        if fname == ".env" && !fname.ends_with(".example") && !fname.ends_with(".template")
-            && let Ok(content) = fs::read_to_string(&path) {
-                let has_real_values = content.lines().any(|l| {
-                    l.contains('=') && !l.trim().starts_with('#')
-                        && !l.contains("your-") && !l.contains("changeme") && !l.contains("example")
-                });
-                if has_real_values {
-                    findings.push(make_finding(
+        if fname == ".env"
+            && !fname.ends_with(".example")
+            && !fname.ends_with(".template")
+            && let Ok(content) = fs::read_to_string(&path)
+        {
+            let has_real_values = content.lines().any(|l| {
+                l.contains('=')
+                    && !l.trim().starts_with('#')
+                    && !l.contains("your-")
+                    && !l.contains("changeme")
+                    && !l.contains("example")
+            });
+            if has_real_values {
+                findings.push(make_finding(
                         Severity::High,
                         FindingCategory::Configuration,
                         "Exposed .env File".to_string(),
@@ -759,20 +815,23 @@ fn detect_config_issues(dir: &Path) -> Vec<SecurityFinding> {
                         Some("Add .env to .gitignore. Use .env.example with placeholder values for documentation.".to_string()),
                         None,
                     ));
-                } else {
-                    findings.push(make_finding(
-                        Severity::Info,
-                        FindingCategory::Configuration,
-                        ".env File Found (likely template)".to_string(),
-                        ".env file found in project. It appears to contain placeholder values.",
-                        &path_str,
-                        None,
-                        None,
-                        Some("Ensure .env is in .gitignore and use .env.example for documentation.".to_string()),
-                        None,
-                    ));
-                }
+            } else {
+                findings.push(make_finding(
+                    Severity::Info,
+                    FindingCategory::Configuration,
+                    ".env File Found (likely template)".to_string(),
+                    ".env file found in project. It appears to contain placeholder values.",
+                    &path_str,
+                    None,
+                    None,
+                    Some(
+                        "Ensure .env is in .gitignore and use .env.example for documentation."
+                            .to_string(),
+                    ),
+                    None,
+                ));
             }
+        }
     }
 
     // Check for CORS: * configuration in JSON/YAML config files
@@ -805,8 +864,11 @@ fn detect_cors_misconfig(dir: &Path) -> std::io::Result<Vec<SecurityFinding>> {
         let fname = path.file_name().unwrap_or_default().to_string_lossy();
         let path_str = path.to_string_lossy();
 
-        if fname == "Cargo.toml" || fname == "package.json" || fname == "config.json"
-            || fname == "appsettings.json" || fname == ".env.example"
+        if fname == "Cargo.toml"
+            || fname == "package.json"
+            || fname == "config.json"
+            || fname == "appsettings.json"
+            || fname == ".env.example"
         {
             continue; // skip common files unlikely to have CORS config
         }
@@ -819,7 +881,9 @@ fn detect_cors_misconfig(dir: &Path) -> std::io::Result<Vec<SecurityFinding>> {
         if let Ok(content) = fs::read_to_string(&path) {
             for (i, line) in content.lines().enumerate() {
                 let trimmed = line.trim();
-                if trimmed.contains("\"*\"") && trimmed.contains("origin") || trimmed.contains("Access-Control-Allow-Origin: *") {
+                if trimmed.contains("\"*\"") && trimmed.contains("origin")
+                    || trimmed.contains("Access-Control-Allow-Origin: *")
+                {
                     if trimmed.starts_with('#') || trimmed.starts_with("//") {
                         continue;
                     }
@@ -857,7 +921,10 @@ fn detect_debug_mode(dir: &Path) -> std::io::Result<Vec<SecurityFinding>> {
         }
 
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if !matches!(ext, "json" | "yaml" | "yml" | "toml" | "py" | "php" | "env" | "ini") {
+        if !matches!(
+            ext,
+            "json" | "yaml" | "yml" | "toml" | "py" | "php" | "env" | "ini"
+        ) {
             continue;
         }
 
@@ -865,15 +932,19 @@ fn detect_debug_mode(dir: &Path) -> std::io::Result<Vec<SecurityFinding>> {
             let path_str = path.to_string_lossy();
             for (i, line) in content.lines().enumerate() {
                 let trimmed = line.trim();
-                if trimmed.starts_with('#') || trimmed.starts_with("//") || trimmed.starts_with(';') {
+                if trimmed.starts_with('#') || trimmed.starts_with("//") || trimmed.starts_with(';')
+                {
                     continue;
                 }
 
                 // Check for debug=true or DEBUG=True patterns
                 if (trimmed.contains("debug") || trimmed.contains("DEBUG"))
-                    && (trimmed.contains("=true") || trimmed.contains("=True")
-                        || trimmed.contains("=1") || trimmed.contains(":\"true\"")
-                        || trimmed.contains(": true") || trimmed.contains(": True"))
+                    && (trimmed.contains("=true")
+                        || trimmed.contains("=True")
+                        || trimmed.contains("=1")
+                        || trimmed.contains(":\"true\"")
+                        || trimmed.contains(": true")
+                        || trimmed.contains(": True"))
                 {
                     findings.push(make_finding(
                         Severity::Low,
@@ -1053,20 +1124,25 @@ fn check_known_vulns(package: &str, version: &str, _ecosystem: &str) -> Vec<Secu
     let pkg_lower = package.to_lowercase();
 
     for cve in KNOWN_CVES {
-        if cve.ecosystem == _ecosystem && pkg_lower == cve.package
-            && (cve.version_constraint)(version) {
-                findings.push(make_finding(
-                    cve.severity,
-                    FindingCategory::DependencyVuln,
-                    format!("Known Vulnerability: {} ({})", cve.cve_id, cve.package),
-                    cve.description.to_string(),
-                    "",
-                    None,
-                    Some(format!("Package: {}, Version: {}", cve.package, version)),
-                    Some(format!("Update {} to a patched version. Run `{} audit` for a full report.", cve.package, _ecosystem)),
-                    Some(cve.cve_id.to_string()),
-                ));
-            }
+        if cve.ecosystem == _ecosystem
+            && pkg_lower == cve.package
+            && (cve.version_constraint)(version)
+        {
+            findings.push(make_finding(
+                cve.severity,
+                FindingCategory::DependencyVuln,
+                format!("Known Vulnerability: {} ({})", cve.cve_id, cve.package),
+                cve.description.to_string(),
+                "",
+                None,
+                Some(format!("Package: {}, Version: {}", cve.package, version)),
+                Some(format!(
+                    "Update {} to a patched version. Run `{} audit` for a full report.",
+                    cve.package, _ecosystem
+                )),
+                Some(cve.cve_id.to_string()),
+            ));
+        }
     }
 
     findings
@@ -1175,11 +1251,19 @@ fn scan_requirements_txt(content: &str, _path: &Path) -> Vec<SecurityFinding> {
         // Parse: package==version or package>=version
         if let Some(eq_pos) = trimmed.find("==") {
             let name = trimmed[..eq_pos].trim();
-            let version = trimmed[eq_pos + 2..].trim().split(|c: char| c.is_whitespace() || c == '#' || c == ',').next().unwrap_or("");
+            let version = trimmed[eq_pos + 2..]
+                .trim()
+                .split(|c: char| c.is_whitespace() || c == '#' || c == ',')
+                .next()
+                .unwrap_or("");
             findings.extend(check_known_vulns(name, version, "pip"));
         } else if let Some(ge_pos) = trimmed.find(">=") {
             let name = trimmed[..ge_pos].trim();
-            let version = trimmed[ge_pos + 2..].trim().split(|c: char| c.is_whitespace() || c == '#' || c == ',').next().unwrap_or("");
+            let version = trimmed[ge_pos + 2..]
+                .trim()
+                .split(|c: char| c.is_whitespace() || c == '#' || c == ',')
+                .next()
+                .unwrap_or("");
             findings.extend(check_known_vulns(name, version, "pip"));
         }
     }
@@ -1201,10 +1285,15 @@ fn scan_pipfile(content: &str, path: &Path) -> Vec<SecurityFinding> {
         if let Some(section) = value.get(*section_name).and_then(|v| v.as_table()) {
             for (name, version_val) in section {
                 let version = match version_val {
-                    toml::Value::String(s) => s.trim_start_matches('\"').trim_end_matches('\"').to_string(),
-                    toml::Value::Table(t) => {
-                        t.get("version").and_then(|v| v.as_str()).unwrap_or("").to_string()
-                    }
+                    toml::Value::String(s) => s
+                        .trim_start_matches('\"')
+                        .trim_end_matches('\"')
+                        .to_string(),
+                    toml::Value::Table(t) => t
+                        .get("version")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     _ => continue,
                 };
                 let clean_version = version.trim_start_matches(['^', '~', '>', '<', '=']);
@@ -1301,11 +1390,13 @@ mod tests {
 
     #[test]
     fn test_severity_sorting() {
-        let mut severities = [Severity::Low,
+        let mut severities = [
+            Severity::Low,
             Severity::Critical,
             Severity::Info,
             Severity::High,
-            Severity::Medium];
+            Severity::Medium,
+        ];
         severities.sort();
         assert_eq!(severities[0], Severity::Info);
         assert_eq!(severities[1], Severity::Low);
@@ -1514,7 +1605,11 @@ document.getElementById("output").innerHTML = userInput;
         let path = Path::new("component.tsx");
         let findings = detect_code_injection(content, path);
         assert!(!findings.is_empty());
-        assert!(findings.iter().any(|f| f.title.contains("dangerouslySetInnerHTML")));
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.title.contains("dangerouslySetInnerHTML"))
+        );
     }
 
     #[test]
@@ -1557,7 +1652,11 @@ query = "SELECT * FROM users WHERE id = " + user_id;
     #[test]
     fn test_scan_clean_code() {
         let tmp = TempDir::new().unwrap();
-        fs::write(tmp.path().join("main.rs"), "fn main() { println!(\"hello\"); }\n").unwrap();
+        fs::write(
+            tmp.path().join("main.rs"),
+            "fn main() { println!(\"hello\"); }\n",
+        )
+        .unwrap();
         fs::write(tmp.path().join("lib.py"), "def hello():\n    pass\n").unwrap();
 
         let scanner = SecurityScanner::new();
@@ -1624,7 +1723,11 @@ query = "SELECT * FROM users WHERE id = " + user_id;
         let tmp = TempDir::new().unwrap();
         let nm = tmp.path().join("node_modules");
         fs::create_dir_all(&nm).unwrap();
-        fs::write(nm.join("bad.js"), "let secret = \"AKIAIOSFODNN7EXAMPLE\";\n").unwrap();
+        fs::write(
+            nm.join("bad.js"),
+            "let secret = \"AKIAIOSFODNN7EXAMPLE\";\n",
+        )
+        .unwrap();
         fs::write(tmp.path().join("good.js"), "console.log(\"hello\");\n").unwrap();
 
         let scanner = SecurityScanner::new()
@@ -1731,7 +1834,11 @@ pytest = "*"
     fn test_config_detection_env_file() {
         let tmp = TempDir::new().unwrap();
         let env_path = tmp.path().join(".env");
-        fs::write(&env_path, "DATABASE_URL=postgres://user:pass@localhost/db\nAPI_KEY=realkey123\n").unwrap();
+        fs::write(
+            &env_path,
+            "DATABASE_URL=postgres://user:pass@localhost/db\nAPI_KEY=realkey123\n",
+        )
+        .unwrap();
 
         // Add a clean file so directory scan has a source file
         fs::write(tmp.path().join("main.rs"), "fn main() {}\n").unwrap();
@@ -1754,21 +1861,24 @@ pytest = "*"
         let tmp = TempDir::new().unwrap();
 
         // Clean file
-        fs::write(tmp.path().join("main.rs"), "fn main() { println!(\"hello\"); }\n").unwrap();
+        fs::write(
+            tmp.path().join("main.rs"),
+            "fn main() { println!(\"hello\"); }\n",
+        )
+        .unwrap();
 
         // File with secret
         fs::write(
             tmp.path().join("config.rs"),
-            format!("let stripe_key = \"sk_{}DATAabcdefghijklmnopqrstuvwxyz\";\n", "live_T"),
+            format!(
+                "let stripe_key = \"sk_{}DATAabcdefghijklmnopqrstuvwxyz\";\n",
+                "live_T"
+            ),
         )
         .unwrap();
 
         // File with injection
-        fs::write(
-            tmp.path().join("app.js"),
-            "let result = eval(userInput);\n",
-        )
-        .unwrap();
+        fs::write(tmp.path().join("app.js"), "let result = eval(userInput);\n").unwrap();
 
         // Dependency file
         fs::write(
@@ -1863,12 +1973,72 @@ source = "registry+"
     #[test]
     fn test_security_summary_counts() {
         let findings = vec![
-            make_finding(Severity::Critical, FindingCategory::Secret, "C1".to_string(), "".to_string(), "f1", None, None, None, None),
-            make_finding(Severity::Critical, FindingCategory::Secret, "C2".to_string(), "".to_string(), "f1", None, None, None, None),
-            make_finding(Severity::High, FindingCategory::CodeInjection, "H1".to_string(), "".to_string(), "f2", None, None, None, None),
-            make_finding(Severity::Medium, FindingCategory::Configuration, "M1".to_string(), "".to_string(), "f3", None, None, None, None),
-            make_finding(Severity::Low, FindingCategory::BestPractice, "L1".to_string(), "".to_string(), "f4", None, None, None, None),
-            make_finding(Severity::Info, FindingCategory::BestPractice, "I1".to_string(), "".to_string(), "f5", None, None, None, None),
+            make_finding(
+                Severity::Critical,
+                FindingCategory::Secret,
+                "C1".to_string(),
+                "".to_string(),
+                "f1",
+                None,
+                None,
+                None,
+                None,
+            ),
+            make_finding(
+                Severity::Critical,
+                FindingCategory::Secret,
+                "C2".to_string(),
+                "".to_string(),
+                "f1",
+                None,
+                None,
+                None,
+                None,
+            ),
+            make_finding(
+                Severity::High,
+                FindingCategory::CodeInjection,
+                "H1".to_string(),
+                "".to_string(),
+                "f2",
+                None,
+                None,
+                None,
+                None,
+            ),
+            make_finding(
+                Severity::Medium,
+                FindingCategory::Configuration,
+                "M1".to_string(),
+                "".to_string(),
+                "f3",
+                None,
+                None,
+                None,
+                None,
+            ),
+            make_finding(
+                Severity::Low,
+                FindingCategory::BestPractice,
+                "L1".to_string(),
+                "".to_string(),
+                "f4",
+                None,
+                None,
+                None,
+                None,
+            ),
+            make_finding(
+                Severity::Info,
+                FindingCategory::BestPractice,
+                "I1".to_string(),
+                "".to_string(),
+                "f5",
+                None,
+                None,
+                None,
+                None,
+            ),
         ];
 
         let report = SecurityReport {
@@ -1876,11 +2046,26 @@ source = "registry+"
             scanned_at: "now".to_string(),
             summary: SecuritySummary {
                 total_findings: findings.len(),
-                critical: findings.iter().filter(|f| f.severity == Severity::Critical).count(),
-                high: findings.iter().filter(|f| f.severity == Severity::High).count(),
-                medium: findings.iter().filter(|f| f.severity == Severity::Medium).count(),
-                low: findings.iter().filter(|f| f.severity == Severity::Low).count(),
-                info: findings.iter().filter(|f| f.severity == Severity::Info).count(),
+                critical: findings
+                    .iter()
+                    .filter(|f| f.severity == Severity::Critical)
+                    .count(),
+                high: findings
+                    .iter()
+                    .filter(|f| f.severity == Severity::High)
+                    .count(),
+                medium: findings
+                    .iter()
+                    .filter(|f| f.severity == Severity::Medium)
+                    .count(),
+                low: findings
+                    .iter()
+                    .filter(|f| f.severity == Severity::Low)
+                    .count(),
+                info: findings
+                    .iter()
+                    .filter(|f| f.severity == Severity::Info)
+                    .count(),
             },
             findings,
             file_count: 5,

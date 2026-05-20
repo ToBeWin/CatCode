@@ -38,4 +38,6 @@ futures = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
+reqwest = { workspace = true }
 tempfile = "3"
+tokio-tungstenite = "0.27"

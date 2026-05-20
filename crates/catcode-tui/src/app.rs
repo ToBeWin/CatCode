@@ -1,7 +1,6 @@
 use catcode_daemon::{
     AgentEventSender, AgentRuntime, AgentRuntimeOptions, AgentStreamEvent, BenchmarkCase,
-    BenchmarkReport, Session, SessionManager, SessionState, default_system_prompt,
-    default_benchmark_cases,
+    BenchmarkReport, Session, SessionManager, SessionState, default_benchmark_cases,
 };
 use std::path::PathBuf;
 use std::time::Instant;
@@ -991,13 +990,28 @@ impl App {
                             AgentStreamEvent::ToolCall { tool, args } => {
                                 AgentEvent::ToolCall { tool, args }
                             }
-                            AgentStreamEvent::ToolResult { tool, output, is_error } => {
-                                AgentEvent::ToolResult { tool, output: format!("{}", if is_error { "❌ " } else { "✅ " }) + &output }
-                            }
+                            AgentStreamEvent::ToolResult {
+                                tool,
+                                output,
+                                is_error,
+                            } => AgentEvent::ToolResult {
+                                tool,
+                                output: format!(
+                                    "{}{}",
+                                    if is_error { "❌ " } else { "✅ " },
+                                    output
+                                ),
+                            },
                             AgentStreamEvent::TextDelta(_t) => continue, // skip individual deltas
-                            AgentStreamEvent::TokenUpdate { input, output, cache } => {
-                                AgentEvent::TokenUpdate { input, output, cache }
-                            }
+                            AgentStreamEvent::TokenUpdate {
+                                input,
+                                output,
+                                cache,
+                            } => AgentEvent::TokenUpdate {
+                                input,
+                                output,
+                                cache,
+                            },
                             AgentStreamEvent::Error(e) => AgentEvent::Error(e),
                             AgentStreamEvent::Completed => continue, // handled below
                         };
@@ -1121,13 +1135,6 @@ impl App {
         }
         had_events
     }
-}
-
-async fn run_agent_once(
-    message: &str,
-    project_dir: PathBuf,
-) -> anyhow::Result<catcode_daemon::AgentLoopResult> {
-    run_agent_once_with_events(message, project_dir, None).await
 }
 
 async fn run_agent_once_with_events(

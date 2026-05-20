@@ -78,10 +78,7 @@ impl Tool for PatchFileTool {
 
         let count = content.matches(old_string).count();
         if count == 0 {
-            return ToolResult::error(format!(
-                "old_string not found in {}",
-                path.display()
-            ));
+            return ToolResult::error(format!("old_string not found in {}", path.display()));
         }
         if count > 1 {
             return ToolResult::error(format!(
@@ -193,7 +190,9 @@ mod tests {
         assert!(result.is_error);
         assert!(result.output.contains("old_string"));
 
-        let result = tool.execute(json!({"old_string": "a", "new_string": "b"}), &ctx).await;
+        let result = tool
+            .execute(json!({"old_string": "a", "new_string": "b"}), &ctx)
+            .await;
         assert!(result.is_error);
         assert!(result.output.contains("path"));
     }

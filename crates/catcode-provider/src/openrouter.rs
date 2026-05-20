@@ -12,16 +12,86 @@ use serde::{Deserialize, Serialize};
 
 /// Built-in OpenRouter model identifiers for reference.
 pub const OPENROUTER_MODELS: &[(&str, &str, f64, f64, u64, ModelTier)] = &[
-    ("openrouter/auto", "OpenRouter Auto", 0.0, 0.0, 128_000, ModelTier::Balanced),
-    ("anthropic/claude-sonnet-4", "Claude Sonnet 4", 3.0, 15.0, 200_000, ModelTier::Powerful),
-    ("anthropic/claude-3.5-sonnet", "Claude 3.5 Sonnet", 3.0, 15.0, 200_000, ModelTier::Powerful),
-    ("openai/gpt-4o", "GPT-4o", 2.5, 10.0, 128_000, ModelTier::Powerful),
-    ("google/gemini-2.5-pro", "Gemini 2.5 Pro", 1.25, 5.0, 1_000_000, ModelTier::Powerful),
-    ("deepseek/deepseek-chat", "DeepSeek V3", 0.5, 0.5, 128_000, ModelTier::Balanced),
-    ("deepseek/deepseek-r1", "DeepSeek R1", 0.55, 2.19, 128_000, ModelTier::Powerful),
-    ("qwen/qwen3", "Qwen 3", 0.35, 0.7, 32_000, ModelTier::Balanced),
-    ("mistral/mistral-large", "Mistral Large", 2.0, 6.0, 128_000, ModelTier::Powerful),
-    ("meta-llama/llama-3.3-70b", "Llama 3.3 70B", 0.36, 0.72, 128_000, ModelTier::Balanced),
+    (
+        "openrouter/auto",
+        "OpenRouter Auto",
+        0.0,
+        0.0,
+        128_000,
+        ModelTier::Balanced,
+    ),
+    (
+        "anthropic/claude-sonnet-4",
+        "Claude Sonnet 4",
+        3.0,
+        15.0,
+        200_000,
+        ModelTier::Powerful,
+    ),
+    (
+        "anthropic/claude-3.5-sonnet",
+        "Claude 3.5 Sonnet",
+        3.0,
+        15.0,
+        200_000,
+        ModelTier::Powerful,
+    ),
+    (
+        "openai/gpt-4o",
+        "GPT-4o",
+        2.5,
+        10.0,
+        128_000,
+        ModelTier::Powerful,
+    ),
+    (
+        "google/gemini-2.5-pro",
+        "Gemini 2.5 Pro",
+        1.25,
+        5.0,
+        1_000_000,
+        ModelTier::Powerful,
+    ),
+    (
+        "deepseek/deepseek-chat",
+        "DeepSeek V3",
+        0.5,
+        0.5,
+        128_000,
+        ModelTier::Balanced,
+    ),
+    (
+        "deepseek/deepseek-r1",
+        "DeepSeek R1",
+        0.55,
+        2.19,
+        128_000,
+        ModelTier::Powerful,
+    ),
+    (
+        "qwen/qwen3",
+        "Qwen 3",
+        0.35,
+        0.7,
+        32_000,
+        ModelTier::Balanced,
+    ),
+    (
+        "mistral/mistral-large",
+        "Mistral Large",
+        2.0,
+        6.0,
+        128_000,
+        ModelTier::Powerful,
+    ),
+    (
+        "meta-llama/llama-3.3-70b",
+        "Llama 3.3 70B",
+        0.36,
+        0.72,
+        128_000,
+        ModelTier::Balanced,
+    ),
 ];
 
 // === Request types (OpenAI-compatible) ===
@@ -194,7 +264,11 @@ fn convert_message(msg: &Message) -> Result<OpenRouterMessage, ProviderError> {
 
     Ok(OpenRouterMessage {
         role: role.to_string(),
-        content: if msg.content.is_empty() { None } else { Some(msg.content.clone()) },
+        content: if msg.content.is_empty() {
+            None
+        } else {
+            Some(msg.content.clone())
+        },
         tool_calls,
         tool_call_id: msg.tool_call_id.clone(),
     })
@@ -257,7 +331,7 @@ pub struct OpenRouterProvider {
 }
 
 impl OpenRouterProvider {
-/// Create a new OpenRouter provider.
+    /// Create a new OpenRouter provider.
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,
@@ -300,14 +374,16 @@ impl Provider for OpenRouterProvider {
     fn supported_models(&self) -> Vec<ModelInfo> {
         OPENROUTER_MODELS
             .iter()
-            .map(|(id, name, input_price, output_price, ctx, tier)| ModelInfo {
-                id: id.to_string(),
-                display_name: name.to_string(),
-                input_price_per_mtok: *input_price,
-                output_price_per_mtok: *output_price,
-                context_window: *ctx,
-                tier: *tier,
-            })
+            .map(
+                |(id, name, input_price, output_price, ctx, tier)| ModelInfo {
+                    id: id.to_string(),
+                    display_name: name.to_string(),
+                    input_price_per_mtok: *input_price,
+                    output_price_per_mtok: *output_price,
+                    context_window: *ctx,
+                    tier: *tier,
+                },
+            )
             .collect()
     }
 
@@ -757,8 +833,14 @@ mod tests {
         let provider = create_test_provider();
         let models = provider.supported_models();
 
-        let powerful = models.iter().filter(|m| m.tier == ModelTier::Powerful).count();
-        let balanced = models.iter().filter(|m| m.tier == ModelTier::Balanced).count();
+        let powerful = models
+            .iter()
+            .filter(|m| m.tier == ModelTier::Powerful)
+            .count();
+        let balanced = models
+            .iter()
+            .filter(|m| m.tier == ModelTier::Balanced)
+            .count();
         assert!(powerful >= 4);
         assert!(balanced >= 4);
     }

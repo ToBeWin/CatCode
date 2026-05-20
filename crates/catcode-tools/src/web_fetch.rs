@@ -68,7 +68,10 @@ impl Tool for WebFetchTool {
 
         // Validate URL format
         if !url.starts_with("http://") && !url.starts_with("https://") {
-            return ToolResult::error(format!("Invalid URL scheme: {}. Must start with http:// or https://", url));
+            return ToolResult::error(format!(
+                "Invalid URL scheme: {}. Must start with http:// or https://",
+                url
+            ));
         }
 
         let timeout_secs = args
@@ -110,10 +113,7 @@ impl Tool for WebFetchTool {
                     ));
                 }
                 if e.is_connect() {
-                    return ToolResult::error(format!(
-                        "Failed to connect to {}: {}",
-                        url, e
-                    ));
+                    return ToolResult::error(format!("Failed to connect to {}: {}", url, e));
                 }
                 return ToolResult::error(format!("Request failed for {}: {}", url, e));
             }
@@ -171,9 +171,7 @@ mod tests {
     async fn test_web_fetch_empty_url() {
         let tool = WebFetchTool;
         let ctx = make_ctx();
-        let result = tool
-            .execute(json!({"url": ""}), &ctx)
-            .await;
+        let result = tool.execute(json!({"url": ""}), &ctx).await;
 
         assert!(result.is_error);
         assert!(result.output.contains("empty"));

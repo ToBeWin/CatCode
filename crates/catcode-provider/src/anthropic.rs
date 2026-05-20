@@ -151,7 +151,7 @@ fn convert_message(msg: &Message) -> Result<AnthropicMessage, ProviderError> {
         Role::System => {
             return Err(ProviderError::RequestFailed(
                 "System messages should be handled separately".to_string(),
-            ))
+            ));
         }
     };
 
@@ -207,9 +207,7 @@ fn convert_response(resp: AnthropicResponse, model: &str) -> Result<ChatResponse
         match block {
             AnthropicResponseContent::Text { text } => {
                 if !text.is_empty() {
-                    content.push(ContentBlock::Text {
-                        text: text.clone(),
-                    });
+                    content.push(ContentBlock::Text { text: text.clone() });
                 }
             }
             AnthropicResponseContent::ToolUse { id, name, input } => {
@@ -254,7 +252,7 @@ pub struct AnthropicProvider {
 }
 
 impl AnthropicProvider {
-/// Create a new Anthropic provider.
+    /// Create a new Anthropic provider.
     pub fn new(api_key: String, base_url: String) -> Self {
         Self {
             api_key,
@@ -373,9 +371,10 @@ impl Provider for AnthropicProvider {
             };
         }
 
-        let anthropic_resp: AnthropicResponse = resp.json().await.map_err(|e| {
-            ProviderError::RequestFailed(format!("Failed to parse response: {e}"))
-        })?;
+        let anthropic_resp: AnthropicResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::RequestFailed(format!("Failed to parse response: {e}")))?;
 
         convert_response(anthropic_resp, &request.model)
     }

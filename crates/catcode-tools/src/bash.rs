@@ -12,17 +12,17 @@ const MAX_OUTPUT_BYTES: usize = 1024 * 1024; // 1 MB
 /// Progress event emitted during bash execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BashProgress {
-/// [`Started`].
+    /// [`Started`].
     Started { command: String },
-/// [`Stdout`].
+    /// [`Stdout`].
     Stdout { data: String, elapsed_secs: f64 },
-/// [`Stderr`].
+    /// [`Stderr`].
     Stderr { data: String, elapsed_secs: f64 },
-/// [`Completed`].
+    /// [`Completed`].
     Completed { exit_code: i32, duration_secs: f64 },
-/// [`TimedOut`].
+    /// [`TimedOut`].
     TimedOut { duration_secs: f64 },
-/// [`Backgrounded`].
+    /// [`Backgrounded`].
     Backgrounded { task_id: String },
 }
 
@@ -48,7 +48,7 @@ impl BashTool {
         }
     }
 
-/// Configure timeout.
+    /// Configure timeout.
     pub fn with_timeout(timeout_secs: u64) -> Self {
         Self { timeout_secs }
     }
@@ -448,46 +448,51 @@ mod tests {
 
     #[tokio::test]
     async fn test_bash_streaming_echo() {
-        let (result, progress) = BashTool::execute_streaming(
-            "echo hello streaming",
-            30,
-            None,
-        )
-        .await;
+        let (result, progress) =
+            BashTool::execute_streaming("echo hello streaming", 30, None).await;
 
         assert!(!result.is_error);
         assert!(result.output.contains("hello streaming"));
 
-        assert!(progress.iter().any(|e| matches!(e, BashProgress::Started { .. })));
-        assert!(progress.iter().any(|e| matches!(e, BashProgress::Stdout { data, .. } if data == "hello streaming")));
-        assert!(progress.iter().any(|e| matches!(e, BashProgress::Completed { exit_code: 0, .. })));
+        assert!(
+            progress
+                .iter()
+                .any(|e| matches!(e, BashProgress::Started { .. }))
+        );
+        assert!(
+            progress.iter().any(
+                |e| matches!(e, BashProgress::Stdout { data, .. } if data == "hello streaming")
+            )
+        );
+        assert!(
+            progress
+                .iter()
+                .any(|e| matches!(e, BashProgress::Completed { exit_code: 0, .. }))
+        );
     }
 
     #[tokio::test]
     async fn test_bash_streaming_with_stderr() {
-        let (result, progress) = BashTool::execute_streaming(
-            "echo err_out >&2 && echo ok_out",
-            30,
-            None,
-        )
-        .await;
+        let (result, progress) =
+            BashTool::execute_streaming("echo err_out >&2 && echo ok_out", 30, None).await;
 
         assert!(!result.is_error);
         assert!(result.output.contains("ok_out"));
         assert!(result.output.contains("err_out"));
 
-        let stderr_events: Vec<_> = progress.iter().filter(|e| matches!(e, BashProgress::Stderr { .. })).collect();
-        assert!(!stderr_events.is_empty(), "should have stderr progress events");
+        let stderr_events: Vec<_> = progress
+            .iter()
+            .filter(|e| matches!(e, BashProgress::Stderr { .. }))
+            .collect();
+        assert!(
+            !stderr_events.is_empty(),
+            "should have stderr progress events"
+        );
     }
 
     #[tokio::test]
     async fn test_bash_streaming_nonzero_exit() {
-        let (result, progress) = BashTool::execute_streaming(
-            "exit 42",
-            30,
-            None,
-        )
-        .await;
+        let (result, progress) = BashTool::execute_streaming("exit 42", 30, None).await;
 
         assert!(result.is_error);
         assert!(result.output.contains("42"));
@@ -504,12 +509,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_bash_progress_events_order() {
-        let (_result, progress) = BashTool::execute_streaming(
-            "echo first && echo second",
-            30,
-            None,
-        )
-        .await;
+        let (_result, progress) =
+            BashTool::execute_streaming("echo first && echo second", 30, None).await;
 
         let mut kinds = progress.iter().map(|e| match e {
             BashProgress::Started { .. } => "started",
@@ -534,30 +535,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_bash_streaming_empty_output() {
-        let (result, progress) = BashTool::execute_streaming(
-            "true",
-            30,
-            None,
-        )
-        .await;
+        let (result, progress) = BashTool::execute_streaming("true", 30, None).await;
 
         assert!(!result.is_error);
         assert!(result.output.contains("no output"));
 
-        let has_completed = progress.iter().any(|e| matches!(e, BashProgress::Completed { exit_code: 0, .. }));
+        let has_completed = progress
+            .iter()
+            .any(|e| matches!(e, BashProgress::Completed { exit_code: 0, .. }));
         assert!(has_completed);
     }
 
     #[tokio::test]
     async fn test_bash_streaming_no_background_for_short_cmd() {
-        let (_result, progress) = BashTool::execute_streaming(
-            "echo quick",
-            30,
-            None,
-        )
-        .await;
+        let (_result, progress) = BashTool::execute_streaming("echo quick", 30, None).await;
 
-        let bg: Vec<_> = progress.iter().filter(|e| matches!(e, BashProgress::Backgrounded { .. })).collect();
+        let bg: Vec<_> = progress
+            .iter()
+            .filter(|e| matches!(e, BashProgress::Backgrounded { .. }))
+            .collect();
         assert!(bg.is_empty(), "short command should NOT be backgrounded");
     }
 
@@ -571,25 +567,20 @@ mod tests {
 
     #[test]
     fn test_extract_hints_single() {
-        let hints = BashTool::extract_hints(
-            "line before\n[catcode-hint: refresh_ui]\nline after",
-        );
+        let hints = BashTool::extract_hints("line before\n[catcode-hint: refresh_ui]\nline after");
         assert_eq!(hints, vec!["refresh_ui"]);
     }
 
     #[test]
     fn test_extract_hints_multiple() {
-        let hints = BashTool::extract_hints(
-            "[catcode-hint: hint_a]\n[catcode-hint: hint_b with spaces]",
-        );
+        let hints =
+            BashTool::extract_hints("[catcode-hint: hint_a]\n[catcode-hint: hint_b with spaces]");
         assert_eq!(hints, vec!["hint_a", "hint_b with spaces"]);
     }
 
     #[test]
     fn test_extract_hints_partial_tag() {
-        let hints = BashTool::extract_hints(
-            "this has [catcode-hint: no closing bracket",
-        );
+        let hints = BashTool::extract_hints("this has [catcode-hint: no closing bracket");
         assert!(hints.is_empty(), "incomplete tag should be ignored");
     }
 
@@ -610,12 +601,27 @@ mod tests {
     #[test]
     fn test_bash_progress_serde_roundtrip() {
         let events = vec![
-            BashProgress::Started { command: "echo hi".into() },
-            BashProgress::Stdout { data: "hi".into(), elapsed_secs: 0.5 },
-            BashProgress::Stderr { data: "warn".into(), elapsed_secs: 0.6 },
-            BashProgress::Completed { exit_code: 0, duration_secs: 1.2 },
-            BashProgress::TimedOut { duration_secs: 60.0 },
-            BashProgress::Backgrounded { task_id: "bash-abc".into() },
+            BashProgress::Started {
+                command: "echo hi".into(),
+            },
+            BashProgress::Stdout {
+                data: "hi".into(),
+                elapsed_secs: 0.5,
+            },
+            BashProgress::Stderr {
+                data: "warn".into(),
+                elapsed_secs: 0.6,
+            },
+            BashProgress::Completed {
+                exit_code: 0,
+                duration_secs: 1.2,
+            },
+            BashProgress::TimedOut {
+                duration_secs: 60.0,
+            },
+            BashProgress::Backgrounded {
+                task_id: "bash-abc".into(),
+            },
         ];
 
         let json = serde_json::to_string(&events).unwrap();
@@ -627,14 +633,13 @@ mod tests {
     async fn test_bash_streaming_working_directory() {
         let tmp = TempDir::new().unwrap();
 
-        let (result, _progress) = BashTool::execute_streaming(
-            "pwd",
-            30,
-            Some(tmp.path()),
-        )
-        .await;
+        let (result, _progress) = BashTool::execute_streaming("pwd", 30, Some(tmp.path())).await;
 
         assert!(!result.is_error);
-        assert!(result.output.contains(&tmp.path().to_string_lossy().to_string()));
+        assert!(
+            result
+                .output
+                .contains(&tmp.path().to_string_lossy().to_string())
+        );
     }
 }
