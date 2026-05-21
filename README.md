@@ -97,13 +97,13 @@ cargo test -p catcode-daemon --test api_smoke -- --nocapture
 | `catcode-provider` | 10 real providers + Mock | 6,162 | 136 |
 | `catcode-middleware` | 8-layer safety middleware chain | 2,918 | 86 |
 | `catcode-context` | Context engineering, compression, budget | 2,694 | 105 |
-| `catcode-daemon` | Agent loop, sessions, persistence, code_review, security_check, swe_bench | ~4,600 | 224 |
+| `catcode-daemon` | Agent loop, sessions, persistence, harness planning, code_review, security_check, swe_bench | ~13,700 | 257 |
 | `catcode-tools` | 13 built-in tools | 2,555 | 120 |
 | `catcode-sandbox` | Native sandbox, classification, approvals | 963 | 31 |
 | `catcode-plugin` | Skills (TOML), Plugins, MCP client, WASM sandbox | 2,123 | 59 |
-| `catcode-api` | axum REST + SSE + WebSocket API + Auth | 747 | 50 |
-| `catcode-tui` | ratatui TUI with cat mascot, thinking mode | 2,961 | 94 |
-| `catcode-cli` | Non-interactive CLI binary | 333 | 0 |
+| `catcode-api` | axum REST + SSE + WebSocket API + Auth + harness/changes/review/handoff endpoints | 3,008 | 58 |
+| `catcode-tui` | ratatui TUI with cat mascot, thinking mode, recovery insights | 4,457 | 114 |
+| `catcode-cli` | Non-interactive CLI binary + harness/changes/review/handoff inspection | 1,210 | 1 |
 | **Total** | **11 crates** | **33,562** | Run `cargo test --workspace -- --list` for current count |
 
 ## Built-in Tools
@@ -145,6 +145,52 @@ CatCode supports real-time reasoning display (chain-of-thought):
 - **TUI** — Thinking panel with yellow/italic "Thinking..." header box
 - Per-message thinking content rendered before message body
 - Works with any provider that supports reasoning in streaming responses
+
+## Coding Harness Contract
+
+The shared runtime prompt is designed for coding-agent work, not generic chat:
+
+- inspect relevant files and tests before editing
+- make scoped, reviewable changes
+- preserve unrelated user changes
+- run relevant verification after edits
+- diagnose failed verification and report blockers clearly
+- keep progress, changed files, and verification visible to the user
+
+The daemon also builds a deterministic harness plan for every run:
+
+- repo profile: language stack, package manager, important files
+- phase plan: intake, repo scan, context pack, edit, diff review, verification, recovery, final report
+- suggested verification commands such as `cargo check --workspace` or `pytest`
+- lightweight context packs selected from repo guidance, manifests, current changes, task keyword matches, entrypoints, and test surfaces
+- structured harness step events that TUI/API clients can render without parsing plain text
+- post-run git snapshots that emit `DiffReview`, `Verification`, or `Recovery` steps based on whether the working tree changed and whether the run succeeded
+- diff review summaries that show the changed file list without loading large patch bodies
+- safe auto-verification execution for allowlisted, non-shell commands such as `cargo check --workspace`
+- actionable verification failure diagnostics that extract error summaries, file locations, and next-step repair suggestions
+- verification repair plans that name the files to inspect, repair steps, and a narrow rerun command when one can be derived
+- one scoped automatic repair pass after failed auto-verification, followed by a verification rerun
+- workspace change summaries via `catcode changes`, TUI `/changes`, and `GET /api/v1/changes`
+- local pattern-based changed-file review via `catcode review`, TUI `/review`, and `GET /api/v1/review`
+- CLI/API access via `catcode harness [task]` and `GET /api/v1/harness`
+- final handoff gates via `catcode handoff [task]`, TUI `/handoff`, and `GET /api/v1/handoff`, combining changed-file summaries, local review findings, and safe verification into a ready/blocker report
+
+### Final Handoff Gate
+
+For coding tasks, CatCode can run a final handoff check before the user accepts the result. The handoff report summarizes the working tree changes, runs the local changed-file review, runs safe auto-verification when an allowlisted command is available, and marks the result as ready only when there are no blocking review errors or failed verification.
+
+Available through `catcode handoff [task]`, TUI `/handoff`, `GET /api/v1/handoff`, and JSON output with `catcode handoff --json`.
+
+## TUI Recovery UX
+
+The TUI includes an adaptive insights panel on wider terminals:
+
+- active session state and failure reason
+- startup provider setup warnings before the first model call fails
+- send-time provider preflight that stops guaranteed missing-key failures before calling the model
+- token usage summary for input, output, and cache tokens
+- deterministic recovery hints after failed or tool-heavy turns
+- `/recovery` command for an in-chat recovery plan
 
 ## Code Review
 
@@ -220,8 +266,15 @@ harness.save_results(&report, "/tmp/report").await?;
 | `/switch <n\|name>` | Switch to session |
 | `/close` | Close current session |
 | `/clear` | Clear messages |
+| `/provider <name>` | Set/view provider |
+| `/set-provider <name>` | Alias for `/provider` |
 | `/model <name>` | Set/view model |
 | `/usage` | Show token usage |
+| `/recovery` | Show recovery plan |
+| `/harness` | Show coding harness plan |
+| `/changes` | Show current changed files |
+| `/review` | Review current changed files |
+| `/handoff` | Run final handoff gate for current changes |
 | `/plan` | Enter plan mode (no tool execution) |
 | `/act` | Enter act mode (default, tools available) |
 | `/auto` | Plan first, then execute after approval |
@@ -248,6 +301,10 @@ catcode session messages <id> # Show persisted message history
 catcode session usage <id>   # Show aggregated token usage
 catcode session recovery <id> # Show recovery plan
 catcode run <message>        # Non-interactive agent run
+catcode harness [task]       # Show coding harness plan
+catcode changes              # Show current working tree changes
+catcode review               # Review current changed files
+catcode handoff [task]       # Run changes, review, and verification gate
 ```
 
 ## API Endpoints
@@ -256,6 +313,10 @@ catcode run <message>        # Non-interactive agent run
 GET    /api/v1/health            # Health check
 GET    /api/v1/version           # Version info
 GET    /api/v1/providers         # List providers
+GET    /api/v1/harness           # Get coding harness plan
+GET    /api/v1/changes           # Get changed file summary
+GET    /api/v1/review            # Review changed files
+GET    /api/v1/handoff           # Run final handoff gate
 
 GET    /api/v1/sessions          # List sessions
 POST   /api/v1/sessions          # Create session

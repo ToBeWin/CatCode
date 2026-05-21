@@ -223,6 +223,21 @@ impl AgentHarness {
 }
 ```
 
+### 3.1.1 当前已实现的 Coding Harness 闭环
+
+当前 harness 不只是 retry/timeout 层，还承担 coding-agent 的任务闭环：
+
+- repo profiling：识别语言栈、包管理器和关键文件
+- deterministic plan：生成 intake、repo scan、context pack、edit、diff review、verification、recovery、final report 阶段
+- context pack：从 repo guidance、manifest、当前变更、任务关键词匹配文件、入口文件和测试面中选择少量高价值上下文注入模型
+- changed-file summary：用 git snapshot 汇总当前工作区变更，避免读取巨大 diff
+- local review：对当前变更文件运行 pattern-based review，输出结构化 findings
+- safe verification：仅对 allowlisted、非 shell 命令执行自动验证，例如 `cargo check --workspace`
+- verification diagnostics：验证失败时提取错误摘要、文件位置和下一步修复建议，给模型下一轮修复提供结构化信号
+- repair plan：把诊断转换成要先读的文件、最小修复步骤和可复验命令，为自动修复回路提供输入
+- auto repair pass：自动验证失败后最多触发一次聚焦修复，并在修复后重新执行验证
+- final handoff：汇总 changes、review、verification，给出 ready/blockers/recommendations
+
 ### 3.2 Retry 策略
 
 ```rust
@@ -803,6 +818,10 @@ GET    /api/v1/sessions/:id/usage    # 查看 token 用量
 POST   /api/v1/sessions/:id/pause    # 暂停
 POST   /api/v1/sessions/:id/resume   # 恢复
 POST   /api/v1/sessions/:id/message  # 发送消息给 Agent
+GET    /api/v1/harness               # 查看 coding harness 计划
+GET    /api/v1/changes               # 查看当前工作区变更文件
+GET    /api/v1/review                # review 当前工作区变更
+GET    /api/v1/handoff               # 运行最终 handoff gate
 
 # 实时流
 GET    /api/v1/sessions/:id/stream   # SSE 实时日志流
@@ -874,7 +893,7 @@ pub enum AuthMode {
 │  ● fix-auth  │  流式展示                       │  Input: 45.2K │
 │  ○ refactor  │                                 │  Cache: 38.1K │
 │  ○ tests     │                                 │  Output: 8.4K │
-│              │                                 │  Cost: $0.023 │
+│              │                                 │  Recovery: 3  │
 │  [+] 新建    │                                 │  节省: 74%    │
 │              │                                 │               │
 ├──────────────┴─────────────────────────────────┴───────────────┤
@@ -925,6 +944,7 @@ A               本次会话内同类操作自动批准
 ```
 /model <name>          切换模型
 /provider <name>       切换 Provider
+/set-provider <name>   /provider 的兼容别名
 /budget <tokens>       设置预算
 /budget-policy <mode>  设置预算策略
 /skill load <name>     加载 Skill
@@ -937,6 +957,11 @@ A               本次会话内同类操作自动批准
 /checkpoint list       列出检查点
 /checkpoint restore    恢复检查点
 /usage                 显示 token 用量
+/recovery              显示当前 session 恢复建议
+/harness               显示当前 coding harness 计划
+/changes               显示当前工作区变更文件
+/review                review 当前工作区变更
+/handoff               运行最终 handoff gate：变更摘要 + review + 安全验证
 /export                导出对话记录
 /help                  帮助
 ```
@@ -1131,7 +1156,7 @@ enabled = ["rust", "git"]
 ```
 Phase 1 - 可运行的最小内核：
   [x] catcode-provider: Anthropic + DeepSeek + Ollama
-  [x] catcode-harness: retry + timeout + output validation
+  [x] catcode-harness: retry + timeout + output validation + repo profiling + verification plan + diagnostics + final handoff gate
   [x] catcode-tools: read_file + write_file + bash + search
   [x] catcode-context: 分层模型 + 基础压缩 + token 追踪
   [x] catcode-daemon: 单 session + checkpoint

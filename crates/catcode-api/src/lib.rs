@@ -21,6 +21,7 @@ use async_trait::async_trait;
 use axum::Router;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 
@@ -37,6 +38,14 @@ pub struct AppState {
     pub runner: Option<Arc<dyn MessageRunner>>,
     /// Optional persistent session store injected by the daemon.
     pub store: Option<Arc<dyn SessionStore>>,
+    /// Optional repository harness planner injected by the daemon.
+    pub harness_planner: Option<Arc<dyn HarnessPlanner>>,
+    /// Optional workspace changes provider injected by the daemon.
+    pub changes_provider: Option<Arc<dyn WorkspaceChangesProvider>>,
+    /// Optional code review provider injected by the daemon.
+    pub review_provider: Option<Arc<dyn CodeReviewProvider>>,
+    /// Optional final handoff provider injected by the daemon.
+    pub handoff_provider: Option<Arc<dyn HandoffProvider>>,
 }
 
 /// Shared session map used by REST routes.
@@ -110,6 +119,117 @@ pub struct RecoveryPlan {
     pub usage: UsageSummary,
 }
 
+/// API-visible repository profile used by harness planning.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ApiRepoProfile {
+    pub has_git: bool,
+    pub language_stack: Vec<String>,
+    pub package_managers: Vec<String>,
+    pub test_commands: Vec<String>,
+    pub important_files: Vec<String>,
+}
+
+/// API-visible coding harness plan.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ApiHarnessPlan {
+    pub task_summary: String,
+    pub phases: Vec<String>,
+    pub repo: ApiRepoProfile,
+    pub verification: ApiVerificationPlan,
+    pub instructions: Vec<String>,
+}
+
+/// API-visible verification command selected by the harness.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ApiVerificationCommand {
+    pub command: String,
+    pub reason: String,
+    pub auto_run: bool,
+}
+
+/// API-visible verification plan selected by the harness.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ApiVerificationPlan {
+    pub commands: Vec<ApiVerificationCommand>,
+    pub safety_note: String,
+}
+
+/// API-visible workspace changes summary.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ApiWorkspaceChanges {
+    pub project_dir: String,
+    pub clean: bool,
+    pub changed_files: Vec<String>,
+    pub summary: String,
+}
+
+/// API-visible review finding.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ApiReviewFinding {
+    pub severity: String,
+    pub category: String,
+    pub file: String,
+    pub line: Option<u64>,
+    pub title: String,
+    pub description: String,
+    pub suggestion: Option<String>,
+}
+
+/// API-visible code review result.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ApiCodeReview {
+    pub title: String,
+    pub summary: String,
+    pub files_reviewed: Vec<String>,
+    pub findings: Vec<ApiReviewFinding>,
+    pub positive_notes: Vec<String>,
+    pub overall_score: u8,
+}
+
+/// API-visible verification run result.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ApiVerificationRunResult {
+    pub command: String,
+    pub success: bool,
+    pub timed_out: bool,
+    pub exit_code: Option<i32>,
+    pub duration_ms: u64,
+    pub stdout_tail: String,
+    pub stderr_tail: String,
+    pub diagnostics: Option<ApiVerificationDiagnostic>,
+    pub repair_plan: Option<ApiVerificationRepairPlan>,
+}
+
+/// API-visible actionable verification failure diagnostic.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ApiVerificationDiagnostic {
+    pub summary: String,
+    pub locations: Vec<String>,
+    pub suggestions: Vec<String>,
+}
+
+/// API-visible verification repair plan for the next coding turn.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ApiVerificationRepairPlan {
+    pub summary: String,
+    pub files_to_inspect: Vec<String>,
+    pub steps: Vec<String>,
+    pub verification_command: String,
+}
+
+/// API-visible final handoff report.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ApiHandoffReport {
+    pub project_dir: String,
+    pub task_summary: String,
+    pub changes: ApiWorkspaceChanges,
+    pub review: ApiCodeReview,
+    pub verification: Option<ApiVerificationRunResult>,
+    pub ready: bool,
+    pub blockers: Vec<String>,
+    pub recommendations: Vec<String>,
+}
+
 /// Backend that executes a user message for a session.
 #[async_trait]
 pub trait MessageRunner: Send + Sync {
@@ -118,6 +238,35 @@ pub trait MessageRunner: Send + Sync {
         session: ApiSession,
         message: String,
     ) -> anyhow::Result<RunMessageResult>;
+}
+
+/// Backend that builds a repository harness plan.
+#[async_trait]
+pub trait HarnessPlanner: Send + Sync {
+    async fn build_harness_plan(
+        &self,
+        project_dir: &Path,
+        task: &str,
+    ) -> anyhow::Result<ApiHarnessPlan>;
+}
+
+/// Backend that summarizes current working tree changes.
+#[async_trait]
+pub trait WorkspaceChangesProvider: Send + Sync {
+    async fn workspace_changes(&self, project_dir: &Path) -> anyhow::Result<ApiWorkspaceChanges>;
+}
+
+/// Backend that reviews current workspace changes.
+#[async_trait]
+pub trait CodeReviewProvider: Send + Sync {
+    async fn review_workspace(&self, project_dir: &Path) -> anyhow::Result<ApiCodeReview>;
+}
+
+/// Backend that runs the final handoff gate for current changes.
+#[async_trait]
+pub trait HandoffProvider: Send + Sync {
+    async fn run_handoff(&self, project_dir: &Path, task: &str)
+    -> anyhow::Result<ApiHandoffReport>;
 }
 
 /// Persistence backend for API session state.
@@ -155,6 +304,10 @@ impl AppState {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             runner: None,
             store: None,
+            harness_planner: None,
+            changes_provider: None,
+            review_provider: None,
+            handoff_provider: None,
         }
     }
 
@@ -167,6 +320,33 @@ impl AppState {
     /// Attach a persistent session store.
     pub fn with_store(mut self, store: Arc<dyn SessionStore>) -> Self {
         self.store = Some(store);
+        self
+    }
+
+    /// Attach a repository harness planner.
+    pub fn with_harness_planner(mut self, harness_planner: Arc<dyn HarnessPlanner>) -> Self {
+        self.harness_planner = Some(harness_planner);
+        self
+    }
+
+    /// Attach a workspace changes provider.
+    pub fn with_changes_provider(
+        mut self,
+        changes_provider: Arc<dyn WorkspaceChangesProvider>,
+    ) -> Self {
+        self.changes_provider = Some(changes_provider);
+        self
+    }
+
+    /// Attach a code review provider.
+    pub fn with_review_provider(mut self, review_provider: Arc<dyn CodeReviewProvider>) -> Self {
+        self.review_provider = Some(review_provider);
+        self
+    }
+
+    /// Attach a final handoff provider.
+    pub fn with_handoff_provider(mut self, handoff_provider: Arc<dyn HandoffProvider>) -> Self {
+        self.handoff_provider = Some(handoff_provider);
         self
     }
 }

@@ -1,11 +1,15 @@
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
-use crate::{ApiSession, AppState, AuditLogEntry, MessageEntry, RecoveryPlan, UsageSummary};
+use crate::{
+    ApiCodeReview, ApiHandoffReport, ApiHarnessPlan, ApiSession, ApiWorkspaceChanges, AppState,
+    AuditLogEntry, MessageEntry, RecoveryPlan, UsageSummary,
+};
 
 /// Session management routes.
 pub fn session_routes() -> Router<AppState> {
@@ -30,6 +34,10 @@ pub fn system_routes() -> Router<AppState> {
         .route("/api/v1/health", get(health))
         .route("/api/v1/version", get(version))
         .route("/api/v1/providers", get(list_providers))
+        .route("/api/v1/harness", get(get_harness_plan))
+        .route("/api/v1/changes", get(get_workspace_changes))
+        .route("/api/v1/review", get(get_code_review))
+        .route("/api/v1/handoff", get(get_handoff_report))
 }
 
 // === Request/Response types ===
@@ -58,6 +66,32 @@ pub struct CreateSessionRequest {
 /// Request body for sending a message to a session.
 pub struct SendMessageRequest {
     pub content: String,
+}
+
+#[derive(Deserialize)]
+/// Query string for repository harness planning.
+pub struct HarnessPlanQuery {
+    pub project_dir: Option<PathBuf>,
+    pub task: Option<String>,
+}
+
+#[derive(Deserialize)]
+/// Query string for workspace changes summaries.
+pub struct WorkspaceChangesQuery {
+    pub project_dir: Option<PathBuf>,
+}
+
+#[derive(Deserialize)]
+/// Query string for code review summaries.
+pub struct CodeReviewQuery {
+    pub project_dir: Option<PathBuf>,
+}
+
+#[derive(Deserialize)]
+/// Query string for final handoff reports.
+pub struct HandoffQuery {
+    pub project_dir: Option<PathBuf>,
+    pub task: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -729,6 +763,138 @@ async fn list_providers() -> impl IntoResponse {
     ]))
 }
 
+/// Build a harness plan for a repository.
+async fn get_harness_plan(
+    State(state): State<AppState>,
+    Query(query): Query<HarnessPlanQuery>,
+) -> impl IntoResponse {
+    let Some(planner) = state.harness_planner.clone() else {
+        return Json(ApiResponse::<ApiHarnessPlan>::error(
+            "Harness planner is not configured",
+        ));
+    };
+    let project_dir = match query.project_dir {
+        Some(project_dir) => project_dir,
+        None => match std::env::current_dir() {
+            Ok(project_dir) => project_dir,
+            Err(err) => {
+                return Json(ApiResponse::<ApiHarnessPlan>::error(format!(
+                    "Failed to resolve project directory: {}",
+                    err
+                )));
+            }
+        },
+    };
+    let task = query
+        .task
+        .unwrap_or_else(|| "inspect repository harness".to_string());
+
+    match planner.build_harness_plan(&project_dir, &task).await {
+        Ok(plan) => Json(ApiResponse::success(plan)),
+        Err(err) => Json(ApiResponse::<ApiHarnessPlan>::error(format!(
+            "Failed to build harness plan: {}",
+            err
+        ))),
+    }
+}
+
+/// Summarize current working tree changes for a repository.
+async fn get_workspace_changes(
+    State(state): State<AppState>,
+    Query(query): Query<WorkspaceChangesQuery>,
+) -> impl IntoResponse {
+    let Some(provider) = state.changes_provider.clone() else {
+        return Json(ApiResponse::<ApiWorkspaceChanges>::error(
+            "Workspace changes provider is not configured",
+        ));
+    };
+    let project_dir = match query.project_dir {
+        Some(project_dir) => project_dir,
+        None => match std::env::current_dir() {
+            Ok(project_dir) => project_dir,
+            Err(err) => {
+                return Json(ApiResponse::<ApiWorkspaceChanges>::error(format!(
+                    "Failed to resolve project directory: {}",
+                    err
+                )));
+            }
+        },
+    };
+
+    match provider.workspace_changes(&project_dir).await {
+        Ok(changes) => Json(ApiResponse::success(changes)),
+        Err(err) => Json(ApiResponse::<ApiWorkspaceChanges>::error(format!(
+            "Failed to summarize workspace changes: {}",
+            err
+        ))),
+    }
+}
+
+/// Review current working tree changes for a repository.
+async fn get_code_review(
+    State(state): State<AppState>,
+    Query(query): Query<CodeReviewQuery>,
+) -> impl IntoResponse {
+    let Some(provider) = state.review_provider.clone() else {
+        return Json(ApiResponse::<ApiCodeReview>::error(
+            "Code review provider is not configured",
+        ));
+    };
+    let project_dir = match query.project_dir {
+        Some(project_dir) => project_dir,
+        None => match std::env::current_dir() {
+            Ok(project_dir) => project_dir,
+            Err(err) => {
+                return Json(ApiResponse::<ApiCodeReview>::error(format!(
+                    "Failed to resolve project directory: {}",
+                    err
+                )));
+            }
+        },
+    };
+
+    match provider.review_workspace(&project_dir).await {
+        Ok(review) => Json(ApiResponse::success(review)),
+        Err(err) => Json(ApiResponse::<ApiCodeReview>::error(format!(
+            "Failed to review workspace changes: {}",
+            err
+        ))),
+    }
+}
+
+/// Run the final handoff gate for current repository changes.
+async fn get_handoff_report(
+    State(state): State<AppState>,
+    Query(query): Query<HandoffQuery>,
+) -> impl IntoResponse {
+    let Some(provider) = state.handoff_provider.clone() else {
+        return Json(ApiResponse::<ApiHandoffReport>::error(
+            "Handoff provider is not configured",
+        ));
+    };
+    let project_dir = match query.project_dir {
+        Some(project_dir) => project_dir,
+        None => match std::env::current_dir() {
+            Ok(project_dir) => project_dir,
+            Err(err) => {
+                return Json(ApiResponse::<ApiHandoffReport>::error(format!(
+                    "Failed to resolve project directory: {}",
+                    err
+                )));
+            }
+        },
+    };
+    let task = query.task.unwrap_or_else(|| "final handoff".to_string());
+
+    match provider.run_handoff(&project_dir, &task).await {
+        Ok(report) => Json(ApiResponse::success(report)),
+        Err(err) => Json(ApiResponse::<ApiHandoffReport>::error(format!(
+            "Failed to run handoff: {}",
+            err
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -771,6 +937,126 @@ mod tests {
             _message: String,
         ) -> anyhow::Result<crate::RunMessageResult> {
             anyhow::bail!("simulated model outage")
+        }
+    }
+
+    struct TestHarnessPlanner;
+
+    #[async_trait]
+    impl crate::HarnessPlanner for TestHarnessPlanner {
+        async fn build_harness_plan(
+            &self,
+            project_dir: &std::path::Path,
+            task: &str,
+        ) -> anyhow::Result<crate::ApiHarnessPlan> {
+            Ok(crate::ApiHarnessPlan {
+                task_summary: task.to_string(),
+                phases: vec!["intake".to_string(), "repo_scan".to_string()],
+                repo: crate::ApiRepoProfile {
+                    has_git: project_dir.join(".git").exists(),
+                    language_stack: vec!["Rust".to_string()],
+                    package_managers: vec!["cargo".to_string()],
+                    test_commands: vec!["cargo check --workspace".to_string()],
+                    important_files: vec!["Cargo.toml".to_string()],
+                },
+                verification: crate::ApiVerificationPlan {
+                    commands: vec![crate::ApiVerificationCommand {
+                        command: "cargo check --workspace".to_string(),
+                        reason: "fast Rust compile/type check".to_string(),
+                        auto_run: true,
+                    }],
+                    safety_note: "allowlisted command".to_string(),
+                },
+                instructions: vec!["Inspect files before editing.".to_string()],
+            })
+        }
+    }
+
+    struct TestChangesProvider;
+
+    #[async_trait]
+    impl crate::WorkspaceChangesProvider for TestChangesProvider {
+        async fn workspace_changes(
+            &self,
+            project_dir: &std::path::Path,
+        ) -> anyhow::Result<crate::ApiWorkspaceChanges> {
+            Ok(crate::ApiWorkspaceChanges {
+                project_dir: project_dir.display().to_string(),
+                clean: false,
+                changed_files: vec!["src/lib.rs".to_string()],
+                summary: "Working tree changed (1 file): src/lib.rs.".to_string(),
+            })
+        }
+    }
+
+    struct TestReviewProvider;
+
+    #[async_trait]
+    impl crate::CodeReviewProvider for TestReviewProvider {
+        async fn review_workspace(
+            &self,
+            _project_dir: &std::path::Path,
+        ) -> anyhow::Result<crate::ApiCodeReview> {
+            Ok(crate::ApiCodeReview {
+                title: "Pattern-based Code Review".to_string(),
+                summary: "Reviewed 1 changed file; found 1 risk.".to_string(),
+                files_reviewed: vec!["src/lib.rs".to_string()],
+                findings: vec![crate::ApiReviewFinding {
+                    severity: "Warning".to_string(),
+                    category: "Style".to_string(),
+                    file: "src/lib.rs".to_string(),
+                    line: Some(1),
+                    title: "Debug print statement".to_string(),
+                    description: "println! used".to_string(),
+                    suggestion: Some("Use tracing.".to_string()),
+                }],
+                positive_notes: Vec::new(),
+                overall_score: 95,
+            })
+        }
+    }
+
+    struct TestHandoffProvider;
+
+    #[async_trait]
+    impl crate::HandoffProvider for TestHandoffProvider {
+        async fn run_handoff(
+            &self,
+            project_dir: &std::path::Path,
+            task: &str,
+        ) -> anyhow::Result<crate::ApiHandoffReport> {
+            Ok(crate::ApiHandoffReport {
+                project_dir: project_dir.display().to_string(),
+                task_summary: task.to_string(),
+                changes: crate::ApiWorkspaceChanges {
+                    project_dir: project_dir.display().to_string(),
+                    clean: false,
+                    changed_files: vec!["src/lib.rs".to_string()],
+                    summary: "Working tree changed (1 file): src/lib.rs.".to_string(),
+                },
+                review: crate::ApiCodeReview {
+                    title: "Pattern-based Code Review".to_string(),
+                    summary: "Reviewed 1 changed file; found no blocking risk.".to_string(),
+                    files_reviewed: vec!["src/lib.rs".to_string()],
+                    findings: Vec::new(),
+                    positive_notes: vec!["No blocking review findings.".to_string()],
+                    overall_score: 100,
+                },
+                verification: Some(crate::ApiVerificationRunResult {
+                    command: "cargo check --workspace".to_string(),
+                    success: true,
+                    timed_out: false,
+                    exit_code: Some(0),
+                    duration_ms: 42,
+                    stdout_tail: String::new(),
+                    stderr_tail: String::new(),
+                    diagnostics: None,
+                    repair_plan: None,
+                }),
+                ready: true,
+                blockers: Vec::new(),
+                recommendations: vec!["Verification passed: cargo check --workspace".to_string()],
+            })
         }
     }
 
@@ -1133,6 +1419,208 @@ mod tests {
         assert!(providers.len() >= 11);
         assert!(providers.iter().any(|p| p["id"] == "mock"));
         assert!(providers.iter().any(|p| p["id"] == "volcengine"));
+    }
+
+    #[tokio::test]
+    async fn test_get_harness_plan_requires_planner() {
+        let app = crate::build_router(test_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/harness")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 2048).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(!json["ok"].as_bool().unwrap());
+        assert!(
+            json["error"]
+                .as_str()
+                .unwrap()
+                .contains("Harness planner is not configured")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_harness_plan_from_injected_planner() {
+        let state = test_state().with_harness_planner(std::sync::Arc::new(TestHarnessPlanner));
+        let app = crate::build_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/harness?project_dir=/tmp&task=fix-tests")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["ok"].as_bool().unwrap());
+        assert_eq!(json["data"]["task_summary"].as_str().unwrap(), "fix-tests");
+        assert_eq!(
+            json["data"]["repo"]["language_stack"][0].as_str().unwrap(),
+            "Rust"
+        );
+        assert_eq!(
+            json["data"]["repo"]["test_commands"][0].as_str().unwrap(),
+            "cargo check --workspace"
+        );
+        assert!(
+            json["data"]["verification"]["commands"][0]["auto_run"]
+                .as_bool()
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_workspace_changes_requires_provider() {
+        let app = crate::build_router(test_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/changes")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 2048).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(!json["ok"].as_bool().unwrap());
+        assert!(
+            json["error"]
+                .as_str()
+                .unwrap()
+                .contains("Workspace changes provider is not configured")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_workspace_changes_from_injected_provider() {
+        let state = test_state().with_changes_provider(std::sync::Arc::new(TestChangesProvider));
+        let app = crate::build_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/changes?project_dir=/tmp")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["ok"].as_bool().unwrap());
+        assert!(!json["data"]["clean"].as_bool().unwrap());
+        assert_eq!(
+            json["data"]["changed_files"][0].as_str().unwrap(),
+            "src/lib.rs"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_code_review_requires_provider() {
+        let app = crate::build_router(test_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/review")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 2048).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(!json["ok"].as_bool().unwrap());
+        assert!(
+            json["error"]
+                .as_str()
+                .unwrap()
+                .contains("Code review provider is not configured")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_code_review_from_injected_provider() {
+        let state = test_state().with_review_provider(std::sync::Arc::new(TestReviewProvider));
+        let app = crate::build_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/review?project_dir=/tmp")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["ok"].as_bool().unwrap());
+        assert_eq!(json["data"]["overall_score"].as_u64().unwrap(), 95);
+        assert_eq!(
+            json["data"]["findings"][0]["title"].as_str().unwrap(),
+            "Debug print statement"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_handoff_report_requires_provider() {
+        let app = crate::build_router(test_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/handoff")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 2048).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(!json["ok"].as_bool().unwrap());
+        assert!(
+            json["error"]
+                .as_str()
+                .unwrap()
+                .contains("Handoff provider is not configured")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_handoff_report_from_injected_provider() {
+        let state = test_state().with_handoff_provider(std::sync::Arc::new(TestHandoffProvider));
+        let app = crate::build_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/handoff?project_dir=/tmp&task=fix-tests")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["ok"].as_bool().unwrap());
+        assert!(json["data"]["ready"].as_bool().unwrap());
+        assert_eq!(json["data"]["task_summary"].as_str().unwrap(), "fix-tests");
+        assert_eq!(
+            json["data"]["verification"]["command"].as_str().unwrap(),
+            "cargo check --workspace"
+        );
     }
 
     #[tokio::test]

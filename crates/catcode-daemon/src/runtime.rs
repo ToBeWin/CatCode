@@ -14,7 +14,9 @@ use catcode_provider::{
 use catcode_tools::ToolRegistry;
 
 use crate::{
-    AgentLoop, AgentLoopResult, AuditLogMiddleware, Config, Database, default_middleware_chain,
+    AgentLoop, AgentLoopResult, AuditLogMiddleware, Config, Database, build_context_pack,
+    build_harness_plan, build_verification_repair_prompt, capture_git_snapshot,
+    default_middleware_chain, run_auto_verification,
 };
 
 /// Runtime options for a single agent run.
@@ -25,6 +27,7 @@ pub struct AgentRuntimeOptions {
     pub system_prompt: String,
     pub session_id: Option<String>,
     pub audit_db: Option<Database>,
+    pub auto_repair: bool,
 }
 
 impl Default for AgentRuntimeOptions {
@@ -35,6 +38,7 @@ impl Default for AgentRuntimeOptions {
             system_prompt: default_system_prompt().to_string(),
             session_id: None,
             audit_db: None,
+            auto_repair: true,
         }
     }
 }
@@ -76,7 +80,38 @@ impl AgentRuntime {
             .unwrap_or_else(|| config.defaults.model.clone());
         let provider = build_provider(&provider_id)?;
         let project_rules = load_project_rules(project_dir);
-        let context = ContextStack::new(options.system_prompt, project_rules);
+        let harness_plan = build_harness_plan(project_dir, message);
+        let before_snapshot = capture_git_snapshot(project_dir).await;
+        let context_pack = build_context_pack(
+            project_dir,
+            message,
+            &harness_plan.repo,
+            before_snapshot.as_ref(),
+        )
+        .await;
+        let harness_tx = event_tx.clone();
+        if let Some(tx) = event_tx.as_ref() {
+            for step in harness_plan.startup_steps() {
+                let _ = tx.send(crate::AgentStreamEvent::HarnessStep {
+                    phase: step.phase,
+                    status: step.status,
+                    message: step.message,
+                });
+            }
+            let _ = tx.send(crate::AgentStreamEvent::HarnessStep {
+                phase: crate::HarnessPhase::ContextPack,
+                status: crate::HarnessStepStatus::Done,
+                message: context_pack.summary_line(),
+            });
+            let _ = tx.send(crate::AgentStreamEvent::Status(harness_plan.status_line()));
+        }
+        let system_prompt = format!(
+            "{}{}{}",
+            options.system_prompt,
+            harness_plan.system_prompt_block(),
+            context_pack.system_prompt_block()
+        );
+        let context = ContextStack::new(system_prompt, project_rules);
         let budget = TokenBudget::new(
             config.budget.session_limit_tokens,
             config.budget.per_request_limit_tokens,
@@ -94,11 +129,146 @@ impl AgentRuntime {
             agent = agent.with_event_tx(tx);
         }
 
-        agent
-            .run_intelligent_with_session(message, project_dir, options.session_id)
-            .await
-            .map_err(|err| anyhow::anyhow!("agent run failed: {err}"))
+        let session_id = options.session_id.clone();
+        let mut result = agent
+            .run_intelligent_with_session(message, project_dir, session_id.clone())
+            .await;
+        let run_succeeded = result.is_ok();
+        let after_snapshot = capture_git_snapshot(project_dir).await;
+        let changed = before_snapshot
+            .as_ref()
+            .zip(after_snapshot.as_ref())
+            .map(|(before, after)| after.changed_since(before))
+            .unwrap_or(false);
+
+        if let Some(tx) = harness_tx.as_ref() {
+            for step in harness_plan.completion_steps(
+                before_snapshot.as_ref(),
+                after_snapshot.as_ref(),
+                run_succeeded,
+            ) {
+                let _ = tx.send(crate::AgentStreamEvent::HarnessStep {
+                    phase: step.phase,
+                    status: step.status,
+                    message: step.message,
+                });
+            }
+        }
+
+        if changed
+            && run_succeeded
+            && let Some(command) = harness_plan.verification.primary_auto_runnable()
+        {
+            if let Some(tx) = harness_tx.as_ref() {
+                let _ = tx.send(crate::AgentStreamEvent::HarnessStep {
+                    phase: crate::HarnessPhase::Verification,
+                    status: crate::HarnessStepStatus::Running,
+                    message: format!("Running {}", command.command),
+                });
+            }
+            if let Some(verification_result) =
+                run_auto_verification(project_dir, &harness_plan.verification).await
+            {
+                if let Some(tx) = harness_tx.as_ref() {
+                    let _ = tx.send(crate::AgentStreamEvent::HarnessStep {
+                        phase: crate::HarnessPhase::Verification,
+                        status: if verification_result.success {
+                            crate::HarnessStepStatus::Done
+                        } else {
+                            crate::HarnessStepStatus::Failed
+                        },
+                        message: verification_result.actionable_summary(),
+                    });
+                }
+                if options.auto_repair
+                    && !verification_result.success
+                    && let Some(repair_prompt) =
+                        build_verification_repair_prompt(&verification_result)
+                {
+                    if let Some(tx) = harness_tx.as_ref() {
+                        let _ = tx.send(crate::AgentStreamEvent::HarnessStep {
+                            phase: crate::HarnessPhase::Recovery,
+                            status: crate::HarnessStepStatus::Running,
+                            message:
+                                "Attempting one focused repair pass from verification diagnostics."
+                                    .to_string(),
+                        });
+                    }
+                    let repair_result = agent
+                        .run_intelligent_with_session(&repair_prompt, project_dir, session_id)
+                        .await;
+                    match repair_result {
+                        Ok(repair) => {
+                            if let Some(tx) = harness_tx.as_ref() {
+                                let _ = tx.send(crate::AgentStreamEvent::HarnessStep {
+                                    phase: crate::HarnessPhase::Recovery,
+                                    status: crate::HarnessStepStatus::Done,
+                                    message: "Repair pass completed; rerunning verification."
+                                        .to_string(),
+                                });
+                            }
+                            if let Some(recheck) =
+                                run_auto_verification(project_dir, &harness_plan.verification).await
+                                && let Some(tx) = harness_tx.as_ref()
+                            {
+                                let _ = tx.send(crate::AgentStreamEvent::HarnessStep {
+                                    phase: crate::HarnessPhase::Verification,
+                                    status: if recheck.success {
+                                        crate::HarnessStepStatus::Done
+                                    } else {
+                                        crate::HarnessStepStatus::Failed
+                                    },
+                                    message: format!(
+                                        "After repair: {}",
+                                        recheck.actionable_summary()
+                                    ),
+                                });
+                            }
+                            if let Ok(initial) = result {
+                                result = Ok(merge_agent_results(initial, repair));
+                            } else {
+                                result = Ok(repair);
+                            }
+                        }
+                        Err(err) => {
+                            if let Some(tx) = harness_tx.as_ref() {
+                                let _ = tx.send(crate::AgentStreamEvent::HarnessStep {
+                                    phase: crate::HarnessPhase::Recovery,
+                                    status: crate::HarnessStepStatus::Failed,
+                                    message: format!("Repair pass failed: {err}"),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        result.map_err(|err| anyhow::anyhow!("agent run failed: {err}"))
     }
+}
+
+fn merge_agent_results(mut initial: AgentLoopResult, repair: AgentLoopResult) -> AgentLoopResult {
+    initial.response = if repair.response.trim().is_empty() {
+        initial.response
+    } else {
+        repair.response
+    };
+    initial.total_usage = initial.total_usage + repair.total_usage;
+    initial.turns_used += repair.turns_used;
+    initial.hit_max_turns |= repair.hit_max_turns;
+    initial.messages.extend(repair.messages);
+    if initial.auto_plan.is_none() {
+        initial.auto_plan = repair.auto_plan;
+    }
+    initial.self_healed += repair.self_healed + 1;
+    initial.sub_agents_spawned += repair.sub_agents_spawned;
+    for model in repair.models_used {
+        if !initial.models_used.contains(&model) {
+            initial.models_used.push(model);
+        }
+    }
+    initial
 }
 
 /// Load config using the standard search order.
@@ -188,7 +358,17 @@ pub fn build_provider(provider_id: &str) -> anyhow::Result<Arc<dyn Provider>> {
 }
 
 pub fn default_system_prompt() -> &'static str {
-    "You are CatCode, a concise coding agent. Use tools when needed, explain the result clearly, and keep file changes scoped to the user's task."
+    "\
+You are CatCode, an AI coding harness for real software projects.
+
+Core contract:
+- Understand the repository before changing code. Inspect relevant files, tests, and existing conventions first.
+- Make the smallest correct change that solves the user's task. Preserve unrelated user changes.
+- Use tools deliberately: read before edit, prefer precise patches, and keep tool output summarized.
+- After code changes, run the most relevant verification command you can reasonably run.
+- If verification fails, diagnose the failure, attempt a focused fix when safe, and report remaining blockers clearly.
+- Keep users oriented with concise progress, changed files, and verification results.
+- For broad or risky tasks, plan first, then execute in reviewable steps."
 }
 
 pub fn load_project_rules(project_dir: &Path) -> String {
@@ -227,6 +407,51 @@ mod tests {
         assert!(options.provider_id.is_none());
         assert!(options.model_id.is_none());
         assert!(options.system_prompt.contains("CatCode"));
+        assert!(options.system_prompt.contains("coding harness"));
+        assert!(options.system_prompt.contains("verification"));
+        assert!(options.auto_repair);
+    }
+
+    #[test]
+    fn test_merge_agent_results_combines_repair_usage() {
+        let mut initial = AgentLoopResult {
+            response: "initial".to_string(),
+            total_usage: Default::default(),
+            turns_used: 2,
+            hit_max_turns: false,
+            messages: Vec::new(),
+            auto_plan: None,
+            self_healed: 0,
+            sub_agents_spawned: 1,
+            models_used: vec!["model-a".to_string()],
+        };
+        initial.total_usage.input_tokens = 10;
+        let mut repair = AgentLoopResult {
+            response: "repair".to_string(),
+            total_usage: Default::default(),
+            turns_used: 1,
+            hit_max_turns: true,
+            messages: Vec::new(),
+            auto_plan: Some("plan".to_string()),
+            self_healed: 2,
+            sub_agents_spawned: 3,
+            models_used: vec!["model-a".to_string(), "model-b".to_string()],
+        };
+        repair.total_usage.output_tokens = 5;
+
+        let merged = merge_agent_results(initial, repair);
+
+        assert_eq!(merged.response, "repair");
+        assert_eq!(merged.total_usage.input_tokens, 10);
+        assert_eq!(merged.total_usage.output_tokens, 5);
+        assert_eq!(merged.turns_used, 3);
+        assert!(merged.hit_max_turns);
+        assert_eq!(merged.self_healed, 3);
+        assert_eq!(merged.sub_agents_spawned, 4);
+        assert_eq!(
+            merged.models_used,
+            vec!["model-a".to_string(), "model-b".to_string()]
+        );
     }
 
     #[test]

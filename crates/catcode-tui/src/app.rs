@@ -1,10 +1,26 @@
 use catcode_daemon::{
     AgentEventSender, AgentRuntime, AgentRuntimeOptions, AgentStreamEvent, BenchmarkCase,
-    BenchmarkReport, Session, SessionManager, SessionState, default_benchmark_cases,
+    BenchmarkReport, DiffSummary, Session, SessionManager, SessionState, build_harness_plan,
+    capture_git_snapshot, default_benchmark_cases, default_system_prompt, review_workspace_changes,
+    run_handoff_report,
 };
 use std::path::PathBuf;
 use std::time::Instant;
 use tokio::sync::mpsc;
+
+const SUPPORTED_PROVIDERS: &[&str] = &[
+    "mock",
+    "ollama",
+    "deepseek",
+    "openai",
+    "anthropic",
+    "google",
+    "openrouter",
+    "qwen",
+    "glm",
+    "minimax",
+    "volcengine",
+];
 
 /// Events from the agent loop to the TUI.
 #[derive(Debug, Clone)]
@@ -24,12 +40,22 @@ pub enum AgentEvent {
     /// Status updates during processing (e.g. "Calling DeepSeek...").
     /// [`StatusUpdate`].
     StatusUpdate(String),
+    /// Structured coding harness phase update.
+    /// [`HarnessStep`].
+    HarnessStep {
+        phase: String,
+        status: String,
+        message: String,
+    },
     /// Agent finished processing.
     /// [`Completed`].
     Completed,
     /// Agent encountered an error.
     /// [`Error`].
     Error(String),
+    /// System message produced by local TUI helpers.
+    /// [`SystemMessage`].
+    SystemMessage(String),
     /// Token usage update.
     /// [`TokenUpdate`].
     TokenUpdate { input: u64, output: u64, cache: u64 },
@@ -250,6 +276,8 @@ pub struct App {
     pub history_saved_input: String,
     /// Real-time thinking content from the current agent response.
     pub current_thinking: String,
+    /// Recent structured harness phase updates.
+    pub harness_steps: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -292,17 +320,17 @@ impl App {
             history_index: None,
             history_saved_input: String::new(),
             current_thinking: String::new(),
+            harness_steps: Vec::new(),
         }
     }
 
     /// Create a new session and make it active.
     pub fn create_session(&mut self, name: &str) {
-        match self.sessions.create_session(
-            name,
-            self.project_dir.clone(),
-            "deepseek-chat",
-            "deepseek",
-        ) {
+        let (provider_id, model_id) = default_session_target(&self.project_dir);
+        match self
+            .sessions
+            .create_session(name, self.project_dir.clone(), model_id, provider_id)
+        {
             Ok(id) => {
                 self.active_session = Some(id.clone());
                 self.messages.clear();
@@ -541,6 +569,55 @@ impl App {
                     self.token_display.cost_usd,
                 );
             }
+            "recovery" | "recover" => {
+                let plan = self.recovery_plan_display();
+                self.add_message(MessageRole::System, plan);
+            }
+            "harness" => {
+                let plan = self.harness_plan_display();
+                self.add_message(MessageRole::System, plan);
+            }
+            "changes" | "diff" => {
+                self.show_workspace_changes();
+            }
+            "review" => {
+                self.show_code_review();
+            }
+            "handoff" => {
+                let task = parts.get(1).map(|task| task.to_string());
+                self.show_handoff(task);
+            }
+            "provider" | "set-provider" => {
+                if let Some(provider) = parts.get(1) {
+                    let provider = provider.trim();
+                    if !SUPPORTED_PROVIDERS.contains(&provider) {
+                        self.status = format!(
+                            "Unknown provider: {} | Supported: {}",
+                            provider,
+                            SUPPORTED_PROVIDERS.join(", ")
+                        );
+                    } else if let Some(session) = self.active_session_mut() {
+                        session.provider_id = provider.to_string();
+                        session.model_id = default_model_for_provider(provider).to_string();
+                        self.status = format!(
+                            "Provider set to: {} | Model: {}",
+                            session.provider_id, session.model_id
+                        );
+                    } else {
+                        self.status = "No active session. Use /new <name> first.".to_string();
+                    }
+                } else {
+                    let current = self
+                        .active_session()
+                        .map(|s| s.provider_id.as_str())
+                        .unwrap_or("none");
+                    self.status = format!(
+                        "Current provider: {} | Usage: /provider <{}>",
+                        current,
+                        SUPPORTED_PROVIDERS.join("|")
+                    );
+                }
+            }
             "model" | "m" => {
                 if let Some(model) = parts.get(1) {
                     if let Some(session) = self.active_session_mut() {
@@ -682,8 +759,14 @@ impl App {
                      /switch <n|name>  Switch to session\n\
                      /close            Close current session\n\
                      /clear            Clear messages\n\
+                     /provider <name>  Set/view provider\n\
                      /model <name>     Set/view model\n\
                      /usage            Show token usage\n\
+                     /recovery         Show recovery plan\n\
+                     /harness          Show coding harness plan\n\
+                     /changes          Show current changed files\n\
+                     /review           Review current changed files\n\
+                     /handoff          Run final handoff gate\n\
                      /plan             Enter plan mode (no tools)\n\
                      /act              Enter act mode (default)\n\
                      /auto             Plan first, then execute\n\
@@ -746,6 +829,27 @@ impl App {
         self.active_session
             .as_ref()
             .and_then(|id| self.sessions.get_mut(id))
+    }
+
+    /// Select the first available session when restored data exists but no active id is set.
+    pub fn ensure_active_session(&mut self) {
+        if self.active_session().is_some() {
+            return;
+        }
+        if let Some(session) = self.sessions.list().first() {
+            self.active_session = Some(session.id.clone());
+        }
+    }
+
+    /// Explain provider setup issues for the currently active session before the first run fails.
+    pub fn active_provider_setup_warning(&self) -> Option<String> {
+        let session = self.active_session()?;
+        provider_setup_warning(&session.provider_id).map(|warning| {
+            format!(
+                "Provider setup: session '{}' uses {} / {}.\n{}",
+                session.name, session.provider_id, session.model_id, warning
+            )
+        })
     }
 
     /// Quit the application.
@@ -928,6 +1032,175 @@ impl App {
         !self.current_thinking.is_empty()
     }
 
+    /// Extract the failure reason for the active session, if any.
+    pub fn active_failure_reason(&self) -> Option<String> {
+        self.active_session()
+            .and_then(|session| match &session.state {
+                SessionState::Failed(reason) => Some(reason.clone()),
+                _ => None,
+            })
+    }
+
+    /// Get the latest visible error message from the transcript.
+    pub fn latest_error_message(&self) -> Option<String> {
+        self.messages
+            .iter()
+            .rev()
+            .find(|msg| {
+                msg.role == MessageRole::System && msg.content.to_lowercase().contains("error")
+            })
+            .map(|msg| msg.content.clone())
+    }
+
+    /// Build deterministic recovery steps for the active session.
+    pub fn recovery_steps(&self) -> Vec<String> {
+        let mut steps = Vec::new();
+
+        if let Some(reason) = self.active_failure_reason() {
+            steps.push(format!("Review failure reason: {reason}"));
+            steps.push("Switch to Plan mode and ask for a scoped recovery plan.".to_string());
+            steps.push("Use /usage to check token pressure before retrying.".to_string());
+            steps.push("Retry with a smaller instruction focused on the failing step.".to_string());
+        } else if self.agent_busy {
+            steps.push("Wait for the current agent turn to finish.".to_string());
+            steps.push("Watch tool messages for failing commands or missing files.".to_string());
+        } else if self
+            .messages
+            .iter()
+            .any(|msg| msg.role == MessageRole::Tool)
+        {
+            steps
+                .push("Review recent tool output before sending the next instruction.".to_string());
+            steps.push("Ask for a focused diff or test run if code was changed.".to_string());
+        } else {
+            steps.push(
+                "Start with a concrete coding task and expected verification command.".to_string(),
+            );
+            steps.push("Use Plan mode for broad refactors before switching to Act.".to_string());
+        }
+
+        if self.token_display.input_tokens + self.token_display.output_tokens > 100_000 {
+            steps.push(
+                "Consider summarizing or starting a fresh session; token usage is high."
+                    .to_string(),
+            );
+        }
+
+        steps
+    }
+
+    /// Format the recovery plan for display in chat.
+    pub fn recovery_plan_display(&self) -> String {
+        let session = self
+            .active_session()
+            .map(|s| format!("{} ({})", s.name, &s.id[..8.min(s.id.len())]))
+            .unwrap_or_else(|| "no active session".to_string());
+        let mut lines = vec![format!("Recovery plan for {session}")];
+
+        if let Some(reason) = self.active_failure_reason() {
+            lines.push(format!("Failure: {reason}"));
+        } else if let Some(error) = self.latest_error_message() {
+            lines.push(error);
+        }
+
+        lines.push(format!(
+            "Usage: input={} output={} cache={}",
+            self.token_display.input_tokens,
+            self.token_display.output_tokens,
+            self.token_display.cache_tokens
+        ));
+        lines.push("Next steps:".to_string());
+        for (idx, step) in self.recovery_steps().iter().enumerate() {
+            lines.push(format!("{}. {}", idx + 1, step));
+        }
+        lines.join("\n")
+    }
+
+    /// Format the current coding harness plan for display in chat.
+    pub fn harness_plan_display(&self) -> String {
+        let task = self
+            .messages
+            .iter()
+            .rev()
+            .find(|msg| msg.role == MessageRole::User)
+            .map(|msg| msg.content.as_str())
+            .filter(|content| !content.trim().is_empty())
+            .unwrap_or("current session");
+        let plan = build_harness_plan(&self.project_dir, task);
+        let phases = plan
+            .phases
+            .iter()
+            .map(|phase| format!("{phase:?}"))
+            .collect::<Vec<_>>()
+            .join(" -> ");
+        let stack = if plan.repo.language_stack.is_empty() {
+            "unknown".to_string()
+        } else {
+            plan.repo.language_stack.join(", ")
+        };
+        let tests = if plan.repo.test_commands.is_empty() {
+            "manual verification".to_string()
+        } else {
+            plan.repo.test_commands.join(", ")
+        };
+
+        format!(
+            "Coding harness plan\nTask: {}\nStack: {}\nPhases: {}\nSuggested verification: {}\nImportant files: {}",
+            plan.task_summary,
+            stack,
+            phases,
+            tests,
+            if plan.repo.important_files.is_empty() {
+                "none".to_string()
+            } else {
+                plan.repo.important_files.join(", ")
+            }
+        )
+    }
+
+    /// Show current working tree changes without loading patch bodies.
+    pub fn show_workspace_changes(&mut self) {
+        let Some(tx) = self.agent_event_tx.clone() else {
+            self.status = "Changes view will be available after TUI startup finishes.".to_string();
+            return;
+        };
+        let project_dir = self.project_dir.clone();
+        self.status = "Checking workspace changes...".to_string();
+        tokio::spawn(async move {
+            let message = workspace_changes_display(project_dir).await;
+            let _ = tx.send(AgentEvent::SystemMessage(message));
+        });
+    }
+
+    /// Review current working tree changes with local pattern checks.
+    pub fn show_code_review(&mut self) {
+        let Some(tx) = self.agent_event_tx.clone() else {
+            self.status = "Review will be available after TUI startup finishes.".to_string();
+            return;
+        };
+        let project_dir = self.project_dir.clone();
+        self.status = "Reviewing workspace changes...".to_string();
+        tokio::spawn(async move {
+            let message = code_review_display(project_dir).await;
+            let _ = tx.send(AgentEvent::SystemMessage(message));
+        });
+    }
+
+    /// Run final handoff checks for current working tree changes.
+    pub fn show_handoff(&mut self, task: Option<String>) {
+        let Some(tx) = self.agent_event_tx.clone() else {
+            self.status = "Handoff will be available after TUI startup finishes.".to_string();
+            return;
+        };
+        let project_dir = self.project_dir.clone();
+        let task = task.unwrap_or_else(|| "final handoff".to_string());
+        self.status = "Running final handoff gate...".to_string();
+        tokio::spawn(async move {
+            let message = handoff_display(project_dir, task).await;
+            let _ = tx.send(AgentEvent::SystemMessage(message));
+        });
+    }
+
     // === Benchmark ===
 
     /// Add a benchmark report.
@@ -967,12 +1240,24 @@ impl App {
             return;
         }
 
+        if let Some(warning) = self.active_provider_setup_warning() {
+            self.add_message(MessageRole::System, warning);
+            self.status = "Provider setup incomplete. Use /provider mock or configure the API key."
+                .to_string();
+            self.set_cat_state(CatState::Error);
+            return;
+        }
+
         let ui_tx = self.agent_event_tx.clone();
         if let Some(ui_tx) = ui_tx {
             self.agent_busy = true;
             self.set_cat_state(CatState::Thinking);
             let msg = message.to_string();
             let project_dir = self.project_dir.clone();
+            let session_id = self.active_session.clone();
+            let provider_id = self.active_session().map(|s| s.provider_id.clone());
+            let model_id = self.active_session().map(|s| s.model_id.clone());
+            let system_prompt = build_tui_system_prompt(self.agent_mode_system_suffix());
 
             tokio::spawn(async move {
                 let _ = ui_tx.send(AgentEvent::StatusUpdate("Starting...".to_string()));
@@ -986,6 +1271,15 @@ impl App {
                     while let Some(event) = agent_rx.recv().await {
                         let ui_event = match event {
                             AgentStreamEvent::Status(s) => AgentEvent::StatusUpdate(s),
+                            AgentStreamEvent::HarnessStep {
+                                phase,
+                                status,
+                                message,
+                            } => AgentEvent::HarnessStep {
+                                phase: format!("{phase:?}"),
+                                status: format!("{status:?}"),
+                                message,
+                            },
                             AgentStreamEvent::Thinking(t) => AgentEvent::Thinking(t),
                             AgentStreamEvent::ToolCall { tool, args } => {
                                 AgentEvent::ToolCall { tool, args }
@@ -1022,7 +1316,15 @@ impl App {
                 let timeout_duration = std::time::Duration::from_secs(120);
                 let result = tokio::time::timeout(
                     timeout_duration,
-                    run_agent_once_with_events(&msg, project_dir, Some(agent_tx)),
+                    run_agent_once_with_events(
+                        &msg,
+                        project_dir,
+                        Some(agent_tx),
+                        provider_id,
+                        model_id,
+                        session_id,
+                        system_prompt,
+                    ),
                 )
                 .await;
 
@@ -1109,6 +1411,18 @@ impl App {
                     self.busy_message = msg;
                     self.status = format!("⟳ {}", self.busy_message);
                 }
+                AgentEvent::HarnessStep {
+                    phase,
+                    status,
+                    message,
+                } => {
+                    let line = format!("{phase}: {status} - {message}");
+                    self.harness_steps.push(line.clone());
+                    if self.harness_steps.len() > 6 {
+                        self.harness_steps.remove(0);
+                    }
+                    self.status = format!("Harness {}", line);
+                }
                 AgentEvent::Completed => {
                     self.agent_busy = false;
                     self.busy_message.clear();
@@ -1116,11 +1430,30 @@ impl App {
                     self.set_cat_state(CatState::Idle);
                 }
                 AgentEvent::Error(err) => {
-                    self.add_message(MessageRole::System, format!("Error: {}", err));
+                    let display_error = actionable_agent_error(&err);
+                    if let Some(id) = self.active_session.clone() {
+                        let _ = self
+                            .sessions
+                            .update_state(&id, SessionState::Failed(display_error.clone()));
+                    }
+                    self.add_message(MessageRole::System, format!("Error: {}", display_error));
                     self.agent_busy = false;
                     self.busy_message.clear();
                     self.spinner_frame = 0;
                     self.set_cat_state(CatState::Error);
+                }
+                AgentEvent::SystemMessage(msg) => {
+                    let status = if msg.starts_with("Final handoff") {
+                        "Final handoff updated"
+                    } else if msg.starts_with("Code review") {
+                        "Code review updated"
+                    } else if msg.starts_with("Coding harness plan") {
+                        "Coding harness plan updated"
+                    } else {
+                        "Workspace changes updated"
+                    };
+                    self.add_message(MessageRole::System, msg);
+                    self.status = status.to_string();
                 }
                 AgentEvent::TokenUpdate {
                     input,
@@ -1130,6 +1463,9 @@ impl App {
                     self.token_display.input_tokens += input;
                     self.token_display.output_tokens += output;
                     self.token_display.cache_tokens += cache;
+                    if self.update_goal_tokens(input + output + cache) {
+                        self.status = "Goal token budget reached; goal paused".to_string();
+                    }
                 }
             }
         }
@@ -1137,22 +1473,312 @@ impl App {
     }
 }
 
+async fn workspace_changes_display(project_dir: PathBuf) -> String {
+    let Some(snapshot) = capture_git_snapshot(&project_dir).await else {
+        return format!(
+            "Workspace changes\nProject: {}\nUnable to read git status.",
+            project_dir.display()
+        );
+    };
+    let diff = DiffSummary::from_snapshot(&snapshot);
+    if diff.changed_files.is_empty() {
+        return format!(
+            "Workspace changes\nProject: {}\nWorking tree clean.",
+            project_dir.display()
+        );
+    }
+
+    let mut lines = vec![
+        "Workspace changes".to_string(),
+        format!("Project: {}", project_dir.display()),
+        diff.summary_line(),
+        "Changed files:".to_string(),
+    ];
+    for file in diff.changed_files {
+        lines.push(format!("- {file}"));
+    }
+    lines.join("\n")
+}
+
+async fn code_review_display(project_dir: PathBuf) -> String {
+    let review = match review_workspace_changes(&project_dir).await {
+        Ok(review) => review,
+        Err(err) => {
+            return format!(
+                "Code review\nProject: {}\nUnable to review workspace changes: {}",
+                project_dir.display(),
+                err
+            );
+        }
+    };
+
+    let mut lines = vec![
+        "Code review".to_string(),
+        format!("Project: {}", project_dir.display()),
+        format!("Score: {}/100", review.overall_score),
+        review.summary,
+        format!(
+            "Files reviewed: {}",
+            if review.files_reviewed.is_empty() {
+                "none".to_string()
+            } else {
+                review.files_reviewed.join(", ")
+            }
+        ),
+    ];
+
+    if review.findings.is_empty() {
+        for note in review.positive_notes {
+            lines.push(format!("- {note}"));
+        }
+        return lines.join("\n");
+    }
+
+    lines.push("Findings:".to_string());
+    for finding in review.findings.iter().take(8) {
+        let line = finding
+            .line
+            .map(|line| format!(":{line}"))
+            .unwrap_or_default();
+        lines.push(format!(
+            "- {:?}/{:?} {}{}: {}",
+            finding.severity, finding.category, finding.file, line, finding.title
+        ));
+        if let Some(suggestion) = finding.suggestion.as_deref() {
+            lines.push(format!("  Suggestion: {suggestion}"));
+        }
+    }
+    if review.findings.len() > 8 {
+        lines.push(format!(
+            "... and {} more finding(s)",
+            review.findings.len() - 8
+        ));
+    }
+    lines.join("\n")
+}
+
+async fn handoff_display(project_dir: PathBuf, task: String) -> String {
+    let report = match run_handoff_report(&project_dir, &task).await {
+        Ok(report) => report,
+        Err(err) => {
+            return format!(
+                "Final handoff\nProject: {}\nUnable to run handoff gate: {}",
+                project_dir.display(),
+                err
+            );
+        }
+    };
+
+    let mut lines = vec![
+        "Final handoff".to_string(),
+        format!("Project: {}", report.project_dir),
+        format!("Task: {}", report.task_summary),
+        format!("Ready: {}", if report.ready { "yes" } else { "no" }),
+        format!(
+            "Changes: {}",
+            if report.changes.changed_files.is_empty() {
+                "none".to_string()
+            } else {
+                report.changes.summary_line()
+            }
+        ),
+        format!(
+            "Review: score {}/100, {} finding(s)",
+            report.review.overall_score,
+            report.review.findings.len()
+        ),
+        format!(
+            "Verification: {}",
+            report
+                .verification
+                .as_ref()
+                .map(|result| result.summary())
+                .unwrap_or_else(|| "not run".to_string())
+        ),
+    ];
+
+    if let Some(diagnostic) = report
+        .verification
+        .as_ref()
+        .and_then(|result| result.diagnostic())
+    {
+        lines.push(format!("Diagnostic: {}", diagnostic.summary));
+        if !diagnostic.locations.is_empty() {
+            lines.push(format!("Locations: {}", diagnostic.locations.join(", ")));
+        }
+    }
+    if let Some(plan) = report
+        .verification
+        .as_ref()
+        .and_then(|result| result.repair_plan())
+    {
+        lines.push(format!("Repair plan: {}", plan.summary));
+        if !plan.files_to_inspect.is_empty() {
+            lines.push(format!("Inspect: {}", plan.files_to_inspect.join(", ")));
+        }
+        lines.push(format!(
+            "Repair verification: {}",
+            plan.verification_command
+        ));
+    }
+
+    if !report.blockers.is_empty() {
+        lines.push("Blockers:".to_string());
+        for blocker in report.blockers {
+            lines.push(format!("- {blocker}"));
+        }
+    }
+    if !report.recommendations.is_empty() {
+        lines.push("Recommendations:".to_string());
+        for recommendation in report.recommendations {
+            lines.push(format!("- {recommendation}"));
+        }
+    }
+    lines.join("\n")
+}
+
 async fn run_agent_once_with_events(
     message: &str,
     project_dir: PathBuf,
     event_tx: Option<AgentEventSender>,
+    provider_id: Option<String>,
+    model_id: Option<String>,
+    session_id: Option<String>,
+    system_prompt: String,
 ) -> anyhow::Result<catcode_daemon::AgentLoopResult> {
     AgentRuntime::new()
         .run_once_with_events(
             message,
             &project_dir,
             AgentRuntimeOptions {
-                system_prompt: "You are CatCode, a concise coding agent inside a terminal UI. Use tools when needed and keep responses focused.".to_string(),
+                provider_id,
+                model_id,
+                session_id,
+                system_prompt,
                 ..Default::default()
             },
             event_tx,
         )
         .await
+}
+
+fn build_tui_system_prompt(mode_suffix: Option<String>) -> String {
+    let mut prompt = format!(
+        "{}\n\nYou are running inside the CatCode TUI. Keep progress visible, mention verification steps, and prefer small, reviewable code changes.",
+        default_system_prompt()
+    );
+    if let Some(suffix) = mode_suffix {
+        prompt.push_str("\n\n");
+        prompt.push_str(&suffix);
+    }
+    prompt
+}
+
+fn default_session_target(project_dir: &std::path::Path) -> (&'static str, &'static str) {
+    if config_file_exists(project_dir) {
+        return ("deepseek", "deepseek-chat");
+    }
+
+    if has_env("CATCODE_API_KEY") || has_env("DEEPSEEK_API_KEY") {
+        ("deepseek", "deepseek-chat")
+    } else if has_env("ANTHROPIC_API_KEY") {
+        ("anthropic", "claude-3-5-sonnet-20241022")
+    } else if has_env("OPENAI_API_KEY") {
+        ("openai", "gpt-4o")
+    } else if has_env("QWEN_API_KEY") {
+        ("qwen", "qwen-plus")
+    } else if has_env("GOOGLE_API_KEY") {
+        ("google", "gemini-1.5-pro")
+    } else if has_env("OPENROUTER_API_KEY") {
+        ("openrouter", "anthropic/claude-3.5-sonnet")
+    } else {
+        ("mock", "mock-model")
+    }
+}
+
+fn config_file_exists(project_dir: &std::path::Path) -> bool {
+    project_dir.join(".catcode").join("config.toml").exists()
+        || std::path::PathBuf::from("./catcode.toml").exists()
+        || dirs::config_dir()
+            .map(|p| p.join("catcode").join("config.toml").exists())
+            .unwrap_or(false)
+}
+
+fn has_env(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn default_model_for_provider(provider: &str) -> &'static str {
+    match provider {
+        "mock" => "mock-model",
+        "ollama" => "llama3.1",
+        "deepseek" => "deepseek-chat",
+        "openai" => "gpt-4o",
+        "anthropic" => "claude-3-5-sonnet-20241022",
+        "google" => "gemini-1.5-pro",
+        "openrouter" => "anthropic/claude-3.5-sonnet",
+        "qwen" => "qwen-plus",
+        "glm" => "glm-4-plus",
+        "minimax" => "abab6.5s-chat",
+        "volcengine" => "doubao-pro-32k",
+        _ => "mock-model",
+    }
+}
+
+fn actionable_agent_error(err: &str) -> String {
+    if err.contains("requires") && err.contains("API_KEY") {
+        format!(
+            "{}\nNext: export the required API key, run catcode init, or switch this session to /provider mock for a local dry run.",
+            err
+        )
+    } else {
+        err.to_string()
+    }
+}
+
+fn provider_setup_warning(provider: &str) -> Option<&'static str> {
+    match provider {
+        "mock" | "ollama" => None,
+        "deepseek" if has_env("DEEPSEEK_API_KEY") || has_env("CATCODE_API_KEY") => None,
+        "openai" if has_env("OPENAI_API_KEY") || has_env("CATCODE_API_KEY") => None,
+        "anthropic" if has_env("ANTHROPIC_API_KEY") || has_env("CATCODE_API_KEY") => None,
+        "google" if has_env("GOOGLE_API_KEY") || has_env("CATCODE_API_KEY") => None,
+        "openrouter" if has_env("OPENROUTER_API_KEY") || has_env("CATCODE_API_KEY") => None,
+        "qwen" if has_env("QWEN_API_KEY") || has_env("CATCODE_API_KEY") => None,
+        "glm" if has_env("GLM_API_KEY") || has_env("CATCODE_API_KEY") => None,
+        "minimax" if has_env("MINIMAX_API_KEY") || has_env("CATCODE_API_KEY") => None,
+        "volcengine" if has_env("VOLCENGINE_API_KEY") || has_env("CATCODE_API_KEY") => None,
+        "deepseek" => Some(
+            "Missing DEEPSEEK_API_KEY or CATCODE_API_KEY. Use /provider mock for a local dry run, or run catcode init.",
+        ),
+        "openai" => Some(
+            "Missing OPENAI_API_KEY or CATCODE_API_KEY. Use /provider mock for a local dry run, or run catcode init.",
+        ),
+        "anthropic" => Some(
+            "Missing ANTHROPIC_API_KEY or CATCODE_API_KEY. Use /provider mock for a local dry run, or run catcode init.",
+        ),
+        "google" => Some(
+            "Missing GOOGLE_API_KEY or CATCODE_API_KEY. Use /provider mock for a local dry run, or run catcode init.",
+        ),
+        "openrouter" => Some(
+            "Missing OPENROUTER_API_KEY or CATCODE_API_KEY. Use /provider mock for a local dry run, or run catcode init.",
+        ),
+        "qwen" => Some(
+            "Missing QWEN_API_KEY or CATCODE_API_KEY. Use /provider mock for a local dry run, or run catcode init.",
+        ),
+        "glm" => Some(
+            "Missing GLM_API_KEY or CATCODE_API_KEY. Use /provider mock for a local dry run, or run catcode init.",
+        ),
+        "minimax" => Some(
+            "Missing MINIMAX_API_KEY or CATCODE_API_KEY. Use /provider mock for a local dry run, or run catcode init.",
+        ),
+        "volcengine" => Some(
+            "Missing VOLCENGINE_API_KEY or CATCODE_API_KEY. Use /provider mock for a local dry run, or run catcode init.",
+        ),
+        _ => Some("Unknown provider. Use /provider mock for a local dry run."),
+    }
 }
 
 /// Format elapsed seconds into a human-readable string.
@@ -1429,6 +2055,47 @@ mod tests {
     }
 
     #[test]
+    fn test_command_provider_sets_provider_and_default_model() {
+        let mut app = make_app();
+        app.create_session("test");
+
+        app.enter_command_mode();
+        app.command_input = "provider mock".to_string();
+        app.submit_input();
+
+        let session = app.active_session().unwrap();
+        assert_eq!(session.provider_id, "mock");
+        assert_eq!(session.model_id, "mock-model");
+        assert!(app.status.contains("Provider set"));
+    }
+
+    #[test]
+    fn test_command_set_provider_alias() {
+        let mut app = make_app();
+        app.create_session("test");
+
+        app.enter_command_mode();
+        app.command_input = "set-provider openai".to_string();
+        app.submit_input();
+
+        let session = app.active_session().unwrap();
+        assert_eq!(session.provider_id, "openai");
+        assert_eq!(session.model_id, "gpt-4o");
+    }
+
+    #[test]
+    fn test_command_provider_rejects_unknown_provider() {
+        let mut app = make_app();
+        app.create_session("test");
+
+        app.enter_command_mode();
+        app.command_input = "provider nope".to_string();
+        app.submit_input();
+
+        assert!(app.status.contains("Unknown provider"));
+    }
+
+    #[test]
     fn test_command_usage() {
         let mut app = make_app();
         app.token_display.input_tokens = 1000;
@@ -1441,6 +2108,135 @@ mod tests {
         app.submit_input();
         assert!(app.status.contains("1000"));
         assert!(app.status.contains("0.0500"));
+    }
+
+    #[test]
+    fn test_command_recovery_adds_plan_message() {
+        let mut app = make_app();
+        app.create_session("test");
+        let id = app.active_session.clone().unwrap();
+        app.sessions
+            .update_state(&id, SessionState::Failed("model unavailable".to_string()))
+            .unwrap();
+
+        app.enter_command_mode();
+        app.command_input = "recovery".to_string();
+        app.submit_input();
+
+        let last = app.messages.last().unwrap();
+        assert_eq!(last.role, MessageRole::System);
+        assert!(last.content.contains("Recovery plan"));
+        assert!(last.content.contains("model unavailable"));
+    }
+
+    #[test]
+    fn test_command_harness_adds_plan_message() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+        let mut app = App::new(tmp.path().to_path_buf());
+        app.add_message(MessageRole::User, "fix failing tests");
+
+        app.enter_command_mode();
+        app.command_input = "harness".to_string();
+        app.submit_input();
+
+        let last = app.messages.last().unwrap();
+        assert_eq!(last.role, MessageRole::System);
+        assert!(last.content.contains("Coding harness plan"));
+        assert!(last.content.contains("Rust"));
+        assert!(last.content.contains("Verification"));
+    }
+
+    #[tokio::test]
+    async fn test_workspace_changes_display_lists_files() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        tokio::process::Command::new("git")
+            .arg("init")
+            .current_dir(tmp.path())
+            .output()
+            .await
+            .unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join("src/lib.rs"), "pub fn changed() {}\n").unwrap();
+
+        let display = workspace_changes_display(tmp.path().to_path_buf()).await;
+
+        assert!(display.contains("Workspace changes"));
+        assert!(display.contains("src/lib.rs"));
+    }
+
+    #[tokio::test]
+    async fn test_code_review_display_lists_findings() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        tokio::process::Command::new("git")
+            .arg("init")
+            .current_dir(tmp.path())
+            .output()
+            .await
+            .unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(
+            tmp.path().join("src/lib.rs"),
+            "pub fn risky() {\n    dbg!(42);\n}\n",
+        )
+        .unwrap();
+
+        let display = code_review_display(tmp.path().to_path_buf()).await;
+
+        assert!(display.contains("Code review"));
+        assert!(display.contains("Debug print statement"));
+        assert!(display.contains("src/lib.rs"));
+    }
+
+    #[tokio::test]
+    async fn test_handoff_display_reports_ready_clean_repo() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        tokio::process::Command::new("git")
+            .arg("init")
+            .current_dir(tmp.path())
+            .output()
+            .await
+            .unwrap();
+
+        let display = handoff_display(tmp.path().to_path_buf(), "inspect".to_string()).await;
+
+        assert!(display.contains("Final handoff"));
+        assert!(display.contains("Ready: yes"));
+        assert!(display.contains("Changes: none"));
+        assert!(display.contains("No working tree changes"));
+    }
+
+    #[test]
+    fn test_poll_agent_events_records_harness_steps() {
+        let mut app = make_app();
+        app.init_agent_channel();
+        let tx = app.agent_event_tx.clone().unwrap();
+        tx.send(AgentEvent::HarnessStep {
+            phase: "RepoScan".to_string(),
+            status: "Done".to_string(),
+            message: "Detected Rust".to_string(),
+        })
+        .unwrap();
+
+        assert!(app.poll_agent_events());
+        assert_eq!(app.harness_steps.len(), 1);
+        assert!(app.harness_steps[0].contains("RepoScan"));
+        assert!(app.status.contains("Detected Rust"));
+    }
+
+    #[test]
+    fn test_poll_agent_events_records_system_message() {
+        let mut app = make_app();
+        app.init_agent_channel();
+        let tx = app.agent_event_tx.clone().unwrap();
+        tx.send(AgentEvent::SystemMessage(
+            "Workspace changes\nclean".to_string(),
+        ))
+        .unwrap();
+
+        assert!(app.poll_agent_events());
+        assert_eq!(app.messages.last().unwrap().role, MessageRole::System);
+        assert!(app.status.contains("Workspace changes"));
     }
 
     #[test]
@@ -1475,6 +2271,18 @@ mod tests {
         let session = app.active_session_mut().unwrap();
         session.model_id = "new-model".to_string();
         assert_eq!(app.active_session().unwrap().model_id, "new-model");
+    }
+
+    #[test]
+    fn test_ensure_active_session_selects_restored_session() {
+        let mut app = make_app();
+        app.create_session("restored");
+        app.active_session = None;
+
+        app.ensure_active_session();
+
+        assert!(app.active_session().is_some());
+        assert_eq!(app.active_session().unwrap().name, "restored");
     }
 
     // === AgentMode tests ===
@@ -1540,6 +2348,72 @@ mod tests {
         app.set_agent_mode(AgentMode::Auto);
         let suffix = app.agent_mode_system_suffix().unwrap();
         assert!(suffix.contains("AUTO MODE"));
+    }
+
+    #[test]
+    fn test_build_tui_system_prompt_includes_mode_suffix() {
+        let prompt = build_tui_system_prompt(Some("PLAN MODE marker".to_string()));
+        assert!(prompt.contains("CatCode TUI"));
+        assert!(prompt.contains("PLAN MODE marker"));
+    }
+
+    #[test]
+    fn test_default_model_for_provider() {
+        assert_eq!(default_model_for_provider("mock"), "mock-model");
+        assert_eq!(default_model_for_provider("deepseek"), "deepseek-chat");
+        assert_eq!(default_model_for_provider("openai"), "gpt-4o");
+    }
+
+    #[test]
+    fn test_actionable_agent_error_for_missing_key() {
+        let err = actionable_agent_error("provider 'deepseek' requires DEEPSEEK_API_KEY to be set");
+
+        assert!(err.contains("/provider mock"));
+        assert!(err.contains("catcode init"));
+    }
+
+    #[test]
+    fn test_provider_setup_warning_for_missing_key() {
+        let warning = provider_setup_warning("deepseek").unwrap();
+
+        assert!(warning.contains("DEEPSEEK_API_KEY"));
+        assert!(warning.contains("/provider mock"));
+    }
+
+    #[test]
+    fn test_provider_setup_warning_allows_mock() {
+        assert!(provider_setup_warning("mock").is_none());
+    }
+
+    #[test]
+    fn test_send_to_agent_preflights_provider_setup() {
+        let mut app = make_app();
+        app.create_session("test");
+        app.init_agent_channel();
+        app.active_session_mut().unwrap().provider_id = "unknown-provider".to_string();
+
+        app.send_to_agent("hello");
+
+        assert!(!app.agent_busy);
+        assert_eq!(app.cat_state, CatState::Error);
+        assert!(app.status.contains("Provider setup incomplete"));
+        assert!(
+            app.messages
+                .last()
+                .unwrap()
+                .content
+                .contains("Unknown provider")
+        );
+    }
+
+    #[test]
+    fn test_recovery_steps_for_tool_output() {
+        let mut app = make_app();
+        app.create_session("test");
+        app.add_message(MessageRole::Tool, "cargo test failed");
+
+        let steps = app.recovery_steps();
+        assert!(steps.iter().any(|step| step.contains("tool output")));
     }
 
     #[test]

@@ -15,6 +15,29 @@
 - Added `GET /api/v1/sessions/:id/messages` and `catcode session messages <id>` for persisted message history retrieval.
 - Added `GET /api/v1/sessions/:id/usage` and `catcode session usage <id>` for token usage summaries.
 - Added `GET /api/v1/sessions/:id/recovery` and `catcode session recovery <id>` for deterministic recovery plans.
+- Added TUI `/recovery` support plus a wide-screen insights panel with session state, token usage, and recovery hints.
+- TUI agent turns now propagate the selected provider, model, session id, and mode-aware system prompt into the shared runtime.
+- TUI startup now selects a restored session automatically instead of showing `no session` with restored sessions.
+- Added TUI `/provider` and `/set-provider` commands, safer mock defaults for unconfigured first runs, and actionable missing-key guidance.
+- TUI sends now preflight provider setup and stop before a guaranteed missing-key failure.
+- Strengthened the shared runtime system prompt into a coding-harness contract covering repo inspection, scoped edits, verification, and recovery.
+- Added a shared daemon harness planner that profiles repos, builds phase plans, suggests verification commands, and injects the plan into runtime context.
+- Added lightweight context packs that inject task-relevant repo guidance, manifests, changed files, keyword-matched files, entrypoints, and test surfaces into coding turns.
+- Added structured verification plans with auto-runnable safety markers for allowlisted commands.
+- Added safe auto-verification execution for allowlisted commands, with timeout, output truncation, and structured pass/fail harness events.
+- Added actionable verification failure diagnostics that extract error summaries, file locations, and next-step repair suggestions.
+- Added verification repair plans with files to inspect, repair steps, and narrow rerun commands for future automatic repair loops.
+- Added a bounded automatic repair pass after failed auto-verification, followed by a verification rerun.
+- Added diff review summaries so harness events show the changed files without loading large patch bodies.
+- Added workspace change summaries through `catcode changes`, TUI `/changes`, and `GET /api/v1/changes`.
+- Added local pattern-based changed-file review through `catcode review`, TUI `/review`, and `GET /api/v1/review`.
+- Added a final handoff report that combines working tree changes, local changed-file review, safe auto-verification, blockers, and recommendations.
+- Added `catcode handoff [task]`, TUI `/handoff`, and `GET /api/v1/handoff` for running the final handoff gate before accepting coding-agent changes.
+- Added structured harness step events for repo scan, task plan, and context pack phases.
+- Added post-run git snapshots that emit diff review, verification, final report, or recovery harness steps.
+- Added TUI `/harness` to display the current coding harness plan.
+- Added `catcode harness [task]` and `GET /api/v1/harness` for CLI/API harness inspection.
+- TUI startup now warns about missing provider API keys before the first model call fails.
 - Fixed the cc-connect helper script request schema and made provider, model, and project directory configurable.
 - Documented the NativeSandbox-only architecture and current provider/runtime scope.
 - Added installer `--check` preflight mode for validating prerequisites without building or writing files.

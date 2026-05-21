@@ -2,11 +2,19 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::{HarnessPhase, HarnessStepStatus};
+
 /// Event emitted by the AgentLoop during execution for real-time progress display.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentStreamEvent {
     /// Status update (e.g. "Calling API...", "Executing tool: bash")
     Status(String),
+    /// Structured coding harness phase update.
+    HarnessStep {
+        phase: HarnessPhase,
+        status: HarnessStepStatus,
+        message: String,
+    },
     /// Thinking/reasoning content from LLM stream
     Thinking(String),
     /// Tool call started

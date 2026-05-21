@@ -24,6 +24,10 @@ pub mod code_review;
 pub mod concurrent_session;
 /// The `config` module.
 pub mod config;
+/// The `handoff` module.
+pub mod handoff;
+/// The `harness` module.
+pub mod harness;
 /// The `lsp_diagnostics` module.
 pub mod lsp_diagnostics;
 /// The `persistence` module.
@@ -50,11 +54,21 @@ pub use benchmark::{
     BenchmarkCase, BenchmarkReport, BenchmarkResult, default_benchmark_cases, format_report_table,
 };
 pub use checkpoint::{Checkpoint, CheckpointManager, CheckpointMeta};
-pub use code_review::{CodeReview, CodeReviewer, ReviewCategory, ReviewFinding, ReviewSeverity};
+pub use code_review::{
+    CodeReview, CodeReviewer, ReviewCategory, ReviewFinding, ReviewSeverity,
+    review_workspace_changes,
+};
 pub use concurrent_session::{
     ConcurrentSessionManager, SessionCommand, SessionEvent, SessionHandle,
 };
 pub use config::Config;
+pub use handoff::{HandoffReport, run_handoff_report};
+pub use harness::{
+    ContextFile, ContextPack, DiffSummary, GitSnapshot, HarnessPhase, HarnessPlan, HarnessStep,
+    HarnessStepStatus, RepoProfile, VerificationCommand, VerificationDiagnostic, VerificationPlan,
+    VerificationRepairPlan, VerificationRunResult, build_context_pack, build_harness_plan,
+    build_verification_repair_prompt, capture_git_snapshot, run_auto_verification,
+};
 pub use persistence::Database;
 pub use runtime::{
     AgentRuntime, AgentRuntimeOptions, build_provider, default_system_prompt, load_config,

@@ -59,12 +59,13 @@ pub async fn run(project_dir: PathBuf) -> anyhow::Result<()> {
                         | catcode_daemon::SessionState::Failed(_)
                 );
                 if !is_terminal {
-                    let session = catcode_daemon::Session::new(
+                    let mut session = catcode_daemon::Session::new(
                         &row.name,
                         std::path::PathBuf::from(&row.project_dir),
                         &row.model_id,
                         &row.provider_id,
                     );
+                    session.id = row.id.clone();
                     let id = session.id.clone();
                     app.sessions.force_remove(&id);
                     app.sessions.force_add(session);
@@ -90,6 +91,8 @@ pub async fn run(project_dir: PathBuf) -> anyhow::Result<()> {
     if app.sessions.total_count() == 0 {
         app.create_session("main");
     }
+    app.ensure_active_session();
+    let setup_warning = app.active_provider_setup_warning();
 
     // Show appropriate welcome message
     let welcome = if config_exists {
@@ -118,9 +121,9 @@ pub async fn run(project_dir: PathBuf) -> anyhow::Result<()> {
 ║         Welcome to CatCode!             ║
 ║                                          ║
 ║  Quick start:                            ║
-║   1. /set-provider <name>  — set provider║
-║   2. /model <name>        — choose model ║
-║   3. Type your message and press Enter   ║
+║   1. Type a task and press Enter         ║
+║   2. /provider mock      — local dry run ║
+║   3. /provider deepseek  — after API key ║
 ║                                          ║
 ║  Commands: /help  to see all commands    ║
 ║  First time?  Run: catcode init          ║
@@ -128,6 +131,9 @@ pub async fn run(project_dir: PathBuf) -> anyhow::Result<()> {
         welcome_box.to_string()
     };
     app.add_message(app::MessageRole::System, &welcome);
+    if let Some(warning) = setup_warning {
+        app.add_message(app::MessageRole::System, warning);
+    }
 
     // Main event loop
     let result = run_event_loop(&mut terminal, &mut app, &mut event_handler).await;

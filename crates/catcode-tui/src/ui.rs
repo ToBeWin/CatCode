@@ -18,6 +18,14 @@ const USER_MSG: Color = Color::Rgb(100, 180, 255);
 const ASSISTANT_MSG: Color = Color::Rgb(80, 200, 120);
 const SYSTEM_MSG: Color = Color::Rgb(255, 200, 50);
 const TOOL_MSG: Color = Color::Rgb(180, 140, 200);
+const HARNESS_PHASES: &[&str] = &[
+    "RepoScan",
+    "TaskPlan",
+    "ContextPack",
+    "DiffReview",
+    "Verification",
+    "Recovery",
+];
 
 /// All available commands for the command palette.
 const COMMANDS: &[(&str, &str)] = &[
@@ -26,8 +34,15 @@ const COMMANDS: &[(&str, &str)] = &[
     ("switch <n|name>", "Switch to session"),
     ("close", "Close current session"),
     ("clear", "Clear messages"),
+    ("provider <name>", "Set/view provider"),
+    ("set-provider <name>", "Alias for provider"),
     ("model <name>", "Set/view model"),
     ("usage", "Show token usage"),
+    ("recovery", "Show recovery plan"),
+    ("harness", "Show coding harness plan"),
+    ("changes", "Show current changed files"),
+    ("review", "Review current changed files"),
+    ("handoff", "Run final handoff gate"),
     ("plan", "Enter plan mode (no tools)"),
     ("act", "Enter act mode (default)"),
     ("auto", "Plan first, then execute"),
@@ -184,17 +199,47 @@ fn render_top_bar(f: &mut Frame, app: &App, area: Rect) {
 /// Render the main content area with sessions list, thinking panel, and messages.
 fn render_main_area(f: &mut Frame, app: &App, area: Rect) {
     if app.has_thinking() {
+        if area.width >= 120 {
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length(22),
+                    Constraint::Length(30),
+                    Constraint::Percentage(28),
+                    Constraint::Min(40),
+                ])
+                .split(area);
+
+            render_sessions_panel(f, app, chunks[0]);
+            render_insights_panel(f, app, chunks[1]);
+            render_thinking_panel(f, app, chunks[2]);
+            render_messages(f, app, chunks[3]);
+        } else {
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length(20),
+                    Constraint::Percentage(30),
+                    Constraint::Min(40),
+                ])
+                .split(area);
+
+            render_sessions_panel(f, app, chunks[0]);
+            render_thinking_panel(f, app, chunks[1]);
+            render_messages(f, app, chunks[2]);
+        }
+    } else if area.width >= 96 {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(20),
-                Constraint::Percentage(30),
+                Constraint::Length(22),
+                Constraint::Length(30),
                 Constraint::Min(40),
             ])
             .split(area);
 
         render_sessions_panel(f, app, chunks[0]);
-        render_thinking_panel(f, app, chunks[1]);
+        render_insights_panel(f, app, chunks[1]);
         render_messages(f, app, chunks[2]);
     } else {
         let chunks = Layout::default()
@@ -281,6 +326,187 @@ fn render_thinking_panel(f: &mut Frame, app: &App, area: Rect) {
         .wrap(Wrap { trim: false });
 
     f.render_widget(paragraph, area);
+}
+
+/// Render active session insights and deterministic recovery hints.
+fn render_insights_panel(f: &mut Frame, app: &App, area: Rect) {
+    let state = app
+        .active_session()
+        .map(|s| match &s.state {
+            SessionState::Running => "running".to_string(),
+            SessionState::Paused => "paused".to_string(),
+            SessionState::Completed => "completed".to_string(),
+            SessionState::Failed(reason) => format!("failed: {reason}"),
+        })
+        .unwrap_or_else(|| "no session".to_string());
+
+    let panel_width = area.width.saturating_sub(4) as usize;
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("State ", Style::default().fg(DIM)),
+            Span::styled(
+                truncate_for_panel(&state, panel_width.saturating_sub(6)),
+                Style::default().fg(session_state_color(app)),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Usage ", Style::default().fg(DIM)),
+            Span::styled(
+                format!(
+                    "{} in / {} out / {} cache",
+                    app.token_display.input_tokens,
+                    app.token_display.output_tokens,
+                    app.token_display.cache_tokens
+                ),
+                Style::default().fg(SUCCESS),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            if app.harness_steps.is_empty() {
+                "Next"
+            } else {
+                "Harness"
+            },
+            Style::default().fg(ACCENT).bold(),
+        )),
+    ];
+
+    let max_detail_lines = usize::from(area.height.saturating_sub(6)).clamp(1, 6);
+    if app.harness_steps.is_empty() {
+        for (idx, step) in app
+            .recovery_steps()
+            .into_iter()
+            .take(max_detail_lines)
+            .enumerate()
+        {
+            lines.push(Line::from(vec![
+                Span::styled(format!("{} ", idx + 1), Style::default().fg(DIM)),
+                Span::styled(
+                    truncate_for_panel(&step, panel_width.saturating_sub(3)),
+                    Style::default().fg(TEXT),
+                ),
+            ]));
+        }
+    } else {
+        for step in app.harness_steps.iter().take(max_detail_lines) {
+            lines.push(format_harness_step_line(step, panel_width));
+        }
+    }
+
+    let title = if app.harness_steps.is_empty() {
+        " Recovery "
+    } else {
+        " Harness "
+    };
+    let paragraph = Paragraph::new(lines).block(
+        Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(session_state_color(app))),
+    );
+
+    f.render_widget(paragraph, area);
+}
+
+fn format_harness_step_line(step: &str, panel_width: usize) -> Line<'static> {
+    let view = parse_harness_step(step);
+    let status = view.status.unwrap_or_else(|| "Update".to_string());
+    let phase_color = harness_phase_color(&view.phase);
+    let status_color = harness_status_color(&status);
+    let summary_budget = panel_width
+        .saturating_sub(view.phase.chars().count())
+        .saturating_sub(status.chars().count())
+        .saturating_sub(4)
+        .max(8);
+
+    Line::from(vec![
+        Span::styled(
+            view.phase,
+            Style::default()
+                .fg(phase_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ", Style::default().fg(DIM)),
+        Span::styled(status, Style::default().fg(status_color)),
+        Span::styled(" ", Style::default().fg(DIM)),
+        Span::styled(
+            truncate_for_panel(&view.summary, summary_budget),
+            Style::default().fg(TEXT),
+        ),
+    ])
+}
+
+struct HarnessStepView {
+    phase: String,
+    status: Option<String>,
+    summary: String,
+}
+
+fn parse_harness_step(step: &str) -> HarnessStepView {
+    let (phase, rest) = step
+        .split_once(':')
+        .map(|(phase, rest)| (phase.trim(), rest.trim()))
+        .unwrap_or(("Harness", step.trim()));
+    let (status, summary) = rest
+        .split_once(" - ")
+        .map(|(status, summary)| (Some(status.trim().to_string()), summary.trim()))
+        .unwrap_or((None, rest));
+
+    HarnessStepView {
+        phase: phase.to_string(),
+        status,
+        summary: summary.to_string(),
+    }
+}
+
+fn truncate_for_panel(text: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+
+    let mut chars = text.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() && max_chars > 3 {
+        format!(
+            "{}...",
+            truncated.chars().take(max_chars - 3).collect::<String>()
+        )
+    } else {
+        truncated
+    }
+}
+
+fn harness_phase_color(phase: &str) -> Color {
+    match HARNESS_PHASES.iter().position(|known| *known == phase) {
+        Some(0) => ACCENT,
+        Some(1) => WARN,
+        Some(2) => TOOL_MSG,
+        Some(3) => Color::Cyan,
+        Some(4) => SUCCESS,
+        Some(5) => ERROR,
+        _ => TEXT,
+    }
+}
+
+fn harness_status_color(status: &str) -> Color {
+    match status.to_ascii_lowercase().as_str() {
+        "done" | "ok" | "complete" | "completed" => SUCCESS,
+        "blocked" | "failed" | "error" => ERROR,
+        "warn" | "warning" | "retrying" => WARN,
+        _ => DIM,
+    }
+}
+
+fn session_state_color(app: &App) -> Color {
+    match app.active_session().map(|session| &session.state) {
+        Some(SessionState::Running) => SUCCESS,
+        Some(SessionState::Paused) => WARN,
+        Some(SessionState::Completed) => ACCENT,
+        Some(SessionState::Failed(_)) => ERROR,
+        None => DIM,
+    }
 }
 
 use catcode_daemon::SessionState;
@@ -544,7 +770,19 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
     use std::path::PathBuf;
+
+    fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<Vec<_>>()
+            .join("")
+    }
 
     #[test]
     fn test_render_doesnt_panic() {
@@ -581,5 +819,55 @@ mod tests {
     fn test_command_suggestions_filtering() {
         assert!(COMMANDS.iter().any(|(cmd, _)| cmd.starts_with("new")));
         assert!(COMMANDS.iter().any(|(cmd, _)| cmd.starts_with("quit")));
+        assert!(COMMANDS.iter().any(|(cmd, _)| cmd.starts_with("handoff")));
+    }
+
+    #[test]
+    fn test_insights_panel_formats_all_harness_phases() {
+        let mut app = App::new(PathBuf::from("/tmp"));
+        app.create_session("test");
+        app.harness_steps = vec![
+            "RepoScan: Done - Detected Rust workspace".to_string(),
+            "TaskPlan: Ready - Selected focused TUI update".to_string(),
+            "ContextPack: Done - Loaded ui.rs and tests".to_string(),
+            "DiffReview: Ready - Checking narrow patch".to_string(),
+            "Verification: Running - cargo test catcode-tui".to_string(),
+            "Recovery: Idle - No recovery action needed".to_string(),
+        ];
+
+        let backend = TestBackend::new(48, 14);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| render_insights_panel(f, &app, f.area()))
+            .unwrap();
+
+        let text = buffer_text(&terminal);
+        for phase in HARNESS_PHASES {
+            assert!(text.contains(phase), "missing phase {phase} in {text}");
+        }
+        assert!(text.contains("Harness"));
+    }
+
+    #[test]
+    fn test_insights_panel_truncates_long_harness_messages() {
+        let mut app = App::new(PathBuf::from("/tmp"));
+        app.create_session("test");
+        app.harness_steps = vec![format!(
+            "RepoScan: Done - {} {}",
+            "scan summary".repeat(8),
+            "unbroken_very_long_layout_destroyer_tail"
+        )];
+
+        let backend = TestBackend::new(34, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| render_insights_panel(f, &app, f.area()))
+            .unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains("RepoScan"));
+        assert!(text.contains("Done"));
+        assert!(text.contains("..."));
+        assert!(!text.contains("layout_destroyer_tail"));
     }
 }

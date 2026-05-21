@@ -1,6 +1,10 @@
+use crate::harness::{DiffSummary, capture_git_snapshot};
 use catcode_core::provider::{Provider, ProviderContext};
 use catcode_core::{ChatRequest, Message, Role};
+use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::process::Command;
 
 /// Severity level of a review finding.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -336,7 +340,7 @@ Focus on:
             let trimmed = line.trim();
             if trimmed.starts_with("println!") && !trimmed.starts_with("println!(\"TODO") {
                 findings.push(ReviewFinding {
-                    severity: ReviewSeverity::Warning,
+                    severity: ReviewSeverity::Info,
                     category: ReviewCategory::Style,
                     file: path.to_string(),
                     line: Some((i + 1) as u64),
@@ -407,29 +411,23 @@ Focus on:
             ("Slack Webhook", "hooks.slack.com"),
             ("Stripe Key", "sk_live_"),
             ("Stripe Test Key", "sk_test_"),
-            ("Generic API Key", "api_key"),
-            ("Password", "password"),
-            ("Secret", "secret"),
-            ("Token", "token"),
         ];
 
         let mut findings = Vec::new();
         for (i, line) in lines.iter().enumerate() {
+            if is_inside_cfg_test_module(lines, i) {
+                continue;
+            }
             let lower = line.to_lowercase();
+            let quoted_values = extract_quoted_values(line);
             for (name, pattern) in &secret_patterns {
-                if lower.contains(&pattern.to_lowercase()) {
+                if quoted_values.iter().any(|value| {
+                    value.to_lowercase().contains(&pattern.to_lowercase())
+                        && looks_like_secret_value(value)
+                }) {
                     // skip if part of a known safe pattern (documentation, example, test)
                     let trimmed = line.trim();
-                    let ignored = trimmed.starts_with("//")
-                        || trimmed.starts_with('#')
-                        || trimmed.starts_with("--")
-                        || trimmed.starts_with("/*")
-                        || trimmed.starts_with('*')
-                        || trimmed.starts_with("example")
-                        || trimmed.starts_with("///")
-                        || lower.contains("example_key")
-                        || lower.contains("your_key_here")
-                        || lower.contains("placeholder");
+                    let ignored = is_comment_or_placeholder(trimmed, &lower);
                     if !ignored {
                         findings.push(ReviewFinding {
                             severity: ReviewSeverity::Error,
@@ -452,6 +450,24 @@ Focus on:
                     }
                 }
             }
+            if looks_like_generic_secret_assignment(line) {
+                findings.push(ReviewFinding {
+                    severity: ReviewSeverity::Error,
+                    category: ReviewCategory::Security,
+                    file: path.to_string(),
+                    line: Some((i + 1) as u64),
+                    title: "Potential hardcoded secret".to_string(),
+                    description: format!(
+                        "Possible credential assignment at line {}: {}",
+                        i + 1,
+                        line.trim()
+                    ),
+                    suggestion: Some(
+                        "Move the credential to environment variables or a secrets manager."
+                            .to_string(),
+                    ),
+                });
+            }
         }
         findings
     }
@@ -468,10 +484,11 @@ Focus on:
                 || trimmed.starts_with("--")
                 || trimmed.starts_with("/*")
                 || trimmed.starts_with('*')
+                || is_inside_cfg_test_module(lines, i)
             {
                 continue;
             }
-            if trimmed.contains(".unwrap()") || trimmed.contains(".unwrap();") {
+            if contains_outside_quotes(trimmed, ".unwrap()") {
                 findings.push(ReviewFinding {
                     severity: ReviewSeverity::Warning,
                     category: ReviewCategory::BestPractice,
@@ -489,7 +506,7 @@ Focus on:
                     ),
                 });
             }
-            if trimmed.contains(".expect(") {
+            if contains_outside_quotes(trimmed, ".expect(") {
                 findings.push(ReviewFinding {
                     severity: ReviewSeverity::Info,
                     category: ReviewCategory::BestPractice,
@@ -542,12 +559,7 @@ Focus on:
                 || trimmed.starts_with("pub enum")
                 || trimmed.starts_with("pub trait")
             {
-                let has_doc = if i >= 1 {
-                    let prev = lines[i - 1].trim();
-                    prev.starts_with("///") || prev.starts_with("/**")
-                } else {
-                    false
-                };
+                let has_doc = has_doc_comment_before(lines, i);
                 if !has_doc {
                     let name = trimmed.split('{').next().unwrap_or(trimmed);
                     findings.push(ReviewFinding {
@@ -580,6 +592,10 @@ Focus on:
         let mut i = 0;
         while i < lines.len() {
             let trimmed = lines[i].trim();
+            if is_inside_cfg_test_module(lines, i) {
+                i += 1;
+                continue;
+            }
             if (trimmed.starts_with("fn ") || trimmed.starts_with("pub fn "))
                 && trimmed.contains('(')
             {
@@ -840,6 +856,280 @@ impl Default for CodeReviewer {
     }
 }
 
+/// Review the current workspace changes using fast local pattern checks.
+pub async fn review_workspace_changes(project_dir: &Path) -> anyhow::Result<CodeReview> {
+    let Some(snapshot) = capture_git_snapshot(project_dir).await else {
+        anyhow::bail!("failed to read git status for {}", project_dir.display());
+    };
+    let diff_summary = DiffSummary::from_snapshot(&snapshot);
+    let mut reviewer = CodeReviewer::new();
+
+    for file in diff_summary
+        .changed_files
+        .iter()
+        .filter(|file| is_reviewable_file(file))
+    {
+        let path = project_dir.join(file);
+        if !path.is_file() {
+            continue;
+        }
+        let Ok(metadata) = tokio::fs::metadata(&path).await else {
+            continue;
+        };
+        if metadata.len() > 512 * 1024 {
+            continue;
+        }
+        if let Ok(content) = tokio::fs::read_to_string(&path).await {
+            reviewer.add_file(file, &content);
+        }
+    }
+
+    if let Some(diff) = capture_review_diff(project_dir, false).await {
+        reviewer.add_diff(&diff);
+    }
+    if let Some(diff) = capture_review_diff(project_dir, true).await {
+        reviewer.add_diff(&diff);
+    }
+
+    let mut review = reviewer.review_patterns();
+    review
+        .files_reviewed
+        .retain(|file| is_reviewable_file(file));
+    review
+        .findings
+        .retain(|finding| finding.severity != ReviewSeverity::Info);
+    review.compute_score();
+    if diff_summary.changed_files.is_empty() {
+        review.summary = "Working tree clean; no changed files to review.".to_string();
+    } else if review.findings.is_empty() {
+        review.summary = format!(
+            "Reviewed {} code/config file(s); no pattern-based risks found.",
+            review.files_reviewed.len()
+        );
+        review.positive_notes.push(
+            "No obvious debug prints, hardcoded secrets, unwrap calls, or large diffs detected."
+                .to_string(),
+        );
+    } else {
+        review.summary = format!(
+            "Reviewed {} code/config file(s); found {} pattern-based risk(s).",
+            review.files_reviewed.len(),
+            review.findings.len()
+        );
+    }
+    Ok(review)
+}
+
+async fn capture_review_diff(project_dir: &Path, staged: bool) -> Option<String> {
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(project_dir)
+        .arg("diff")
+        .arg("--no-ext-diff")
+        .arg("--unified=0");
+    if staged {
+        command.arg("--cached");
+    }
+
+    let output = tokio::time::timeout(Duration::from_secs(5), command.output())
+        .await
+        .ok()?
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(tail_lossy(&output.stdout, 200_000))
+}
+
+fn is_reviewable_file(file: &str) -> bool {
+    let lower = file.to_lowercase();
+    let reviewable = [
+        ".rs", ".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".java", ".kt", ".swift", ".c", ".cc",
+        ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".sh", ".toml", ".yaml", ".yml", ".json",
+    ];
+    reviewable.iter().any(|suffix| lower.ends_with(suffix))
+}
+
+fn is_comment_or_placeholder(trimmed: &str, lower: &str) -> bool {
+    trimmed.starts_with("//")
+        || trimmed.starts_with('#')
+        || trimmed.starts_with("--")
+        || trimmed.starts_with("/*")
+        || trimmed.starts_with('*')
+        || trimmed.starts_with("example")
+        || trimmed.starts_with("///")
+        || lower.contains("example_key")
+        || lower.contains("your_key_here")
+        || lower.contains("placeholder")
+}
+
+fn looks_like_generic_secret_assignment(line: &str) -> bool {
+    let trimmed = line.trim();
+    let lower = trimmed.to_lowercase();
+    if is_comment_or_placeholder(trimmed, &lower) {
+        return false;
+    }
+    let Some(separator) = lower.find('=').or_else(|| lower.find(':')) else {
+        return false;
+    };
+    if let Some(first_quote) = lower.find('"').or_else(|| lower.find('\''))
+        && separator > first_quote
+    {
+        return false;
+    }
+    let lhs = &lower[..separator];
+    if !["api_key", "apikey", "password", "secret", "token"]
+        .iter()
+        .any(|needle| lhs.contains(needle))
+    {
+        return false;
+    }
+
+    extract_quoted_values(&trimmed[separator + 1..])
+        .iter()
+        .any(|value| looks_like_secret_value(value))
+}
+
+fn extract_quoted_values(line: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut chars = line.char_indices().peekable();
+    while let Some((_, ch)) = chars.next() {
+        if ch != '"' && ch != '\'' {
+            continue;
+        }
+        let quote = ch;
+        let mut value = String::new();
+        while let Some((_, next)) = chars.next() {
+            if next == '\\' {
+                if let Some((_, escaped)) = chars.next() {
+                    value.push(escaped);
+                }
+                continue;
+            }
+            if next == quote {
+                break;
+            }
+            value.push(next);
+        }
+        values.push(value);
+    }
+    values
+}
+
+fn looks_like_secret_value(value: &str) -> bool {
+    let value = value.trim();
+    if value.len() < 16 {
+        return false;
+    }
+    if value.starts_with('$') {
+        return false;
+    }
+    let lower = value.to_lowercase();
+    if lower.contains("placeholder")
+        || lower.contains("example")
+        || lower.contains("your_")
+        || lower.contains("dummy")
+    {
+        return false;
+    }
+
+    let has_alpha = value.chars().any(|ch| ch.is_ascii_alphabetic());
+    let has_digit = value.chars().any(|ch| ch.is_ascii_digit());
+    let has_symbol = value
+        .chars()
+        .any(|ch| matches!(ch, '_' | '-' | '.' | '/' | '+'));
+    has_alpha && (has_digit || has_symbol)
+}
+
+fn has_doc_comment_before(lines: &[&str], index: usize) -> bool {
+    if index == 0 {
+        return false;
+    }
+    let mut cursor = index;
+    while cursor > 0 {
+        cursor -= 1;
+        let prev = lines[cursor].trim();
+        if prev.starts_with("///") || prev.starts_with("/**") {
+            return true;
+        }
+        if prev.is_empty() || prev.starts_with("#[") {
+            continue;
+        }
+        return false;
+    }
+    false
+}
+
+fn is_inside_cfg_test_module(lines: &[&str], index: usize) -> bool {
+    let mut pending_cfg_test = false;
+    let mut test_depth = 0usize;
+
+    for (idx, line) in lines.iter().enumerate().take(index + 1) {
+        let trimmed = line.trim();
+        if trimmed.starts_with("#[cfg(test)]") {
+            pending_cfg_test = true;
+        }
+
+        if pending_cfg_test && trimmed.starts_with("mod tests") {
+            test_depth = test_depth.saturating_add(trimmed.matches('{').count());
+            test_depth = test_depth.saturating_sub(trimmed.matches('}').count());
+            pending_cfg_test = false;
+            if idx == index {
+                return true;
+            }
+            continue;
+        }
+
+        if test_depth > 0 {
+            if idx == index {
+                return true;
+            }
+            test_depth = test_depth.saturating_add(trimmed.matches('{').count());
+            test_depth = test_depth.saturating_sub(trimmed.matches('}').count());
+        }
+    }
+
+    false
+}
+
+fn contains_outside_quotes(line: &str, needle: &str) -> bool {
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+    for (idx, ch) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' && !in_single {
+            in_double = !in_double;
+            continue;
+        }
+        if ch == '\'' && !in_double {
+            in_single = !in_single;
+            continue;
+        }
+        if !in_single && !in_double && line[idx..].starts_with(needle) {
+            return true;
+        }
+    }
+    false
+}
+
+fn tail_lossy(bytes: &[u8], max_chars: usize) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let char_count = text.chars().count();
+    if char_count <= max_chars {
+        return text.to_string();
+    }
+    text.chars().skip(char_count - max_chars).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1065,8 +1355,8 @@ mod tests {
     #[test]
     fn test_check_secrets() {
         let lines = vec![
-            "    let aws_key = \"AKIAIOSFODNN7EXAMPLE\";",
-            "    let github = \"ghp_abc123def456\";",
+            "    let aws_key = \"AKIAIOSFODNN7LIVEKEY\";",
+            "    let github = \"ghp_abc123def4567890\";",
             "    let normal = 42;",
         ];
         let findings = CodeReviewer::check_secrets("test.rs", &lines);
@@ -1098,6 +1388,40 @@ mod tests {
     }
 
     #[test]
+    fn test_check_secrets_ignores_generic_token_docs() {
+        let lines = vec![
+            "Token usage is tracked after every API call.",
+            "pub struct TokenBudget {",
+            "GET /api/v1/sessions/:id/usage # token usage",
+        ];
+        let findings = CodeReviewer::check_secrets("README.md", &lines);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_check_secrets_flags_generic_assignment() {
+        let lines = vec!["let api_key = \"prod_live_1234567890abcdef\";"];
+        let findings = CodeReviewer::check_secrets("test.rs", &lines);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].category, ReviewCategory::Security);
+    }
+
+    #[test]
+    fn test_check_secrets_ignores_env_var_reference() {
+        let lines = vec!["api_key = \"$ANTHROPIC_API_KEY\""];
+        let findings = CodeReviewer::check_secrets("config.toml", &lines);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_is_reviewable_file_focuses_code_and_config() {
+        assert!(is_reviewable_file("src/lib.rs"));
+        assert!(is_reviewable_file("catcode.toml"));
+        assert!(!is_reviewable_file("README.md"));
+        assert!(!is_reviewable_file("image.png"));
+    }
+
+    #[test]
     fn test_check_unwrap() {
         let lines = vec![
             "fn main() {",
@@ -1116,6 +1440,31 @@ mod tests {
         let lines = vec![
             "    // .unwrap() is fine here",
             "    // .expect(\"msg\") also okay",
+        ];
+        let findings = CodeReviewer::check_unwrap("test.rs", &lines);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_check_unwrap_ignores_cfg_test_module() {
+        let lines = vec![
+            "#[cfg(test)]",
+            "mod tests {",
+            "    #[test]",
+            "    fn it_works() {",
+            "        let value = Some(1).unwrap();",
+            "    }",
+            "}",
+        ];
+        let findings = CodeReviewer::check_unwrap("test.rs", &lines);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_check_unwrap_ignores_string_literals() {
+        let lines = vec![
+            r#"let message = ".unwrap() call at line";"#,
+            r#"let message = ".expect(\"msg\") call";"#,
         ];
         let findings = CodeReviewer::check_unwrap("test.rs", &lines);
         assert!(findings.is_empty());
@@ -1156,6 +1505,19 @@ mod tests {
     }
 
     #[test]
+    fn test_check_public_docs_allows_derive_between_doc_and_item() {
+        let lines = vec![
+            "/// API-visible value.",
+            "#[derive(Debug, Clone)]",
+            "pub struct ApiValue {",
+            "    pub name: String,",
+            "}",
+        ];
+        let findings = CodeReviewer::check_public_docs("test.rs", &lines);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
     fn test_check_long_functions() {
         let mut content = String::from("fn short() {}\n");
         content.push_str("fn very_long() {\n");
@@ -1174,6 +1536,18 @@ mod tests {
     fn test_check_long_functions_no_false() {
         let content =
             "fn short() {\n    let x = 1;\n}\nfn also_short(a: i32) -> i32 {\n    a + 1\n}\n";
+        let lines: Vec<&str> = content.lines().collect();
+        let findings = CodeReviewer::check_long_functions("test.rs", &lines);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_check_long_functions_ignores_cfg_test_module() {
+        let mut content = String::from("#[cfg(test)]\nmod tests {\nfn long_test() {\n");
+        for _ in 0..120 {
+            content.push_str("    let x = 1;\n");
+        }
+        content.push_str("}\n}\n");
         let lines: Vec<&str> = content.lines().collect();
         let findings = CodeReviewer::check_long_functions("test.rs", &lines);
         assert!(findings.is_empty());
@@ -1433,5 +1807,32 @@ diff --git a/src/main.rs b/src/main.rs
         // The diff has a TODO, but check_todos only runs on files, not diffs
         // The large diff check runs on diffs
         assert!(review.files_reviewed.contains(&"src/main.rs".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_review_workspace_changes_reads_changed_files() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        tokio::process::Command::new("git")
+            .arg("init")
+            .current_dir(tmp.path())
+            .output()
+            .await
+            .unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(
+            tmp.path().join("src/lib.rs"),
+            "pub fn risky() {\n    dbg!(42);\n}\n",
+        )
+        .unwrap();
+
+        let review = review_workspace_changes(tmp.path()).await.unwrap();
+
+        assert!(review.files_reviewed.contains(&"src/lib.rs".to_string()));
+        assert!(
+            review
+                .findings
+                .iter()
+                .any(|finding| finding.title == "Debug print statement")
+        );
     }
 }

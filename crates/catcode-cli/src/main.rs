@@ -3,8 +3,9 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, bail};
 use catcode_daemon::{
-    AgentRuntime, AgentRuntimeOptions, Config, default_system_prompt, load_config,
-    project_dir_or_current,
+    AgentRuntime, AgentRuntimeOptions, Config, DiffSummary, build_harness_plan,
+    capture_git_snapshot, default_system_prompt, load_config, project_dir_or_current,
+    review_workspace_changes, run_handoff_report,
 };
 use clap::{Parser, Subcommand};
 
@@ -47,6 +48,47 @@ enum Commands {
         /// Project directory for tool execution and project rules
         #[arg(long, value_name = "DIR")]
         project_dir: Option<PathBuf>,
+    },
+    /// Show the coding harness plan for a repository
+    Harness {
+        /// Task or prompt to plan for
+        task: Option<String>,
+        /// Project directory to inspect
+        #[arg(long, value_name = "DIR")]
+        project_dir: Option<PathBuf>,
+        /// Print the raw JSON plan
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show current working tree changes
+    Changes {
+        /// Project directory to inspect
+        #[arg(long, value_name = "DIR")]
+        project_dir: Option<PathBuf>,
+        /// Print the raw JSON summary
+        #[arg(long)]
+        json: bool,
+    },
+    /// Review current working tree changes
+    Review {
+        /// Project directory to inspect
+        #[arg(long, value_name = "DIR")]
+        project_dir: Option<PathBuf>,
+        /// Print the raw JSON review
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run final handoff checks for current changes
+    Handoff {
+        /// Task or prompt these changes are meant to satisfy
+        #[arg(value_name = "TASK", num_args = 0..)]
+        task: Vec<String>,
+        /// Project directory to inspect
+        #[arg(long, value_name = "DIR")]
+        project_dir: Option<PathBuf>,
+        /// Print the raw JSON handoff report
+        #[arg(long)]
+        json: bool,
     },
     /// Print version information
     Version,
@@ -393,6 +435,26 @@ async fn main() -> anyhow::Result<()> {
         } => {
             run_non_interactive(message, provider, model, project_dir).await?;
         }
+        Commands::Harness {
+            task,
+            project_dir,
+            json,
+        } => {
+            show_harness_plan(task, project_dir, json)?;
+        }
+        Commands::Changes { project_dir, json } => {
+            show_workspace_changes(project_dir, json).await?;
+        }
+        Commands::Review { project_dir, json } => {
+            show_code_review(project_dir, json).await?;
+        }
+        Commands::Handoff {
+            task,
+            project_dir,
+            json,
+        } => {
+            show_handoff_report(task, project_dir, json).await?;
+        }
         Commands::Version => {
             println!("CatCode version {}", env!("CARGO_PKG_VERSION"));
         }
@@ -410,12 +472,271 @@ async fn main() -> anyhow::Result<()> {
             );
             println!("                                 Manage agent sessions");
             println!("  run <message>                  Run non-interactive agent");
+            println!("  harness [task] [--project-dir <dir>] [--json]");
+            println!("                                 Show coding harness plan");
+            println!("  changes [--project-dir <dir>] [--json]");
+            println!("                                 Show current working tree changes");
+            println!("  review [--project-dir <dir>] [--json]");
+            println!("                                 Review current working tree changes");
+            println!("  handoff [task] [--project-dir <dir>] [--json]");
+            println!("                                 Run changes, review, and verification gate");
             println!("  version                        Print version");
             println!("  help                           Print this help");
         }
     }
 
     Ok(())
+}
+
+fn show_harness_plan(
+    task: Option<String>,
+    project_dir: Option<PathBuf>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let project_dir = project_dir_or_current(project_dir)?;
+    let task = task.unwrap_or_else(|| "inspect repository harness".to_string());
+    let plan = build_harness_plan(&project_dir, &task);
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&plan)?);
+        return Ok(());
+    }
+
+    let phases = plan
+        .phases
+        .iter()
+        .map(|phase| format!("{phase:?}"))
+        .collect::<Vec<_>>()
+        .join(" -> ");
+    let stack = format_cli_list(&plan.repo.language_stack);
+    let managers = format_cli_list(&plan.repo.package_managers);
+    let verification = if plan.verification.commands.is_empty() {
+        plan.verification.safety_note.clone()
+    } else {
+        plan.verification
+            .commands
+            .iter()
+            .map(|command| {
+                let mode = if command.auto_run {
+                    "auto-runnable"
+                } else {
+                    "manual/agent-confirmed"
+                };
+                format!("{} ({mode}; {})", command.command, command.reason)
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let files = format_cli_list(&plan.repo.important_files);
+
+    println!("Coding harness plan");
+    println!("Project: {}", project_dir.display());
+    println!("Task: {}", plan.task_summary);
+    println!("Stack: {stack}");
+    println!("Package managers: {managers}");
+    println!("Git: {}", plan.repo.has_git);
+    println!("Phases: {phases}");
+    println!("Suggested verification: {verification}");
+    println!("Verification safety: {}", plan.verification.safety_note);
+    println!("Important files: {files}");
+    println!();
+    println!("Instructions:");
+    for instruction in plan.instructions {
+        println!("  - {instruction}");
+    }
+
+    Ok(())
+}
+
+async fn show_workspace_changes(project_dir: Option<PathBuf>, json: bool) -> anyhow::Result<()> {
+    let project_dir = project_dir_or_current(project_dir)?;
+    let snapshot = capture_git_snapshot(&project_dir)
+        .await
+        .with_context(|| format!("failed to read git status for {}", project_dir.display()))?;
+    let diff = DiffSummary::from_snapshot(&snapshot);
+    let clean = diff.changed_files.is_empty();
+    let summary = if clean {
+        "Working tree clean.".to_string()
+    } else {
+        diff.summary_line()
+    };
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "project_dir": project_dir.display().to_string(),
+                "clean": clean,
+                "changed_files": diff.changed_files,
+                "summary": summary,
+            }))?
+        );
+        return Ok(());
+    }
+
+    println!("Workspace changes");
+    println!("Project: {}", project_dir.display());
+    println!("{}", summary);
+    if !clean {
+        println!();
+        for file in diff.changed_files {
+            println!("  - {file}");
+        }
+    }
+
+    Ok(())
+}
+
+async fn show_code_review(project_dir: Option<PathBuf>, json: bool) -> anyhow::Result<()> {
+    let project_dir = project_dir_or_current(project_dir)?;
+    let review = review_workspace_changes(&project_dir).await?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&review)?);
+        return Ok(());
+    }
+
+    println!("Code review");
+    println!("Project: {}", project_dir.display());
+    println!("Score: {}/100", review.overall_score);
+    println!("{}", review.summary);
+    println!(
+        "Files reviewed: {}",
+        format_cli_list(&review.files_reviewed)
+    );
+
+    if review.findings.is_empty() {
+        if !review.positive_notes.is_empty() {
+            println!();
+            println!("Positive notes:");
+            for note in review.positive_notes {
+                println!("  - {note}");
+            }
+        }
+        return Ok(());
+    }
+
+    println!();
+    println!("Findings:");
+    for finding in review.findings {
+        let line = finding
+            .line
+            .map(|line| format!(":{line}"))
+            .unwrap_or_default();
+        println!(
+            "  - {:?}/{:?} {}{}: {}",
+            finding.severity, finding.category, finding.file, line, finding.title
+        );
+        println!("    {}", finding.description);
+        if let Some(suggestion) = finding.suggestion {
+            println!("    Suggestion: {suggestion}");
+        }
+    }
+
+    Ok(())
+}
+
+async fn show_handoff_report(
+    task: Vec<String>,
+    project_dir: Option<PathBuf>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let project_dir = project_dir_or_current(project_dir)?;
+    let task = if task.is_empty() {
+        "final handoff".to_string()
+    } else {
+        task.join(" ")
+    };
+    let report = run_handoff_report(&project_dir, &task).await?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    println!("Final handoff");
+    println!("Project: {}", report.project_dir);
+    println!("Task: {}", report.task_summary);
+    println!("Ready: {}", if report.ready { "yes" } else { "no" });
+    println!(
+        "Changes: {}",
+        if report.changes.changed_files.is_empty() {
+            "none".to_string()
+        } else {
+            report.changes.summary_line()
+        }
+    );
+    println!(
+        "Review: score {}/100, {} finding(s)",
+        report.review.overall_score,
+        report.review.findings.len()
+    );
+    match report.verification.as_ref() {
+        Some(result) => println!("Verification: {}", result.summary()),
+        None => println!("Verification: not run"),
+    }
+    if let Some(diagnostic) = report
+        .verification
+        .as_ref()
+        .and_then(|result| result.diagnostic())
+    {
+        println!("Diagnostic: {}", diagnostic.summary);
+        if !diagnostic.locations.is_empty() {
+            println!("Locations: {}", diagnostic.locations.join(", "));
+        }
+    }
+    if let Some(plan) = report
+        .verification
+        .as_ref()
+        .and_then(|result| result.repair_plan())
+    {
+        println!("Repair plan: {}", plan.summary);
+        if !plan.files_to_inspect.is_empty() {
+            println!("Inspect: {}", plan.files_to_inspect.join(", "));
+        }
+        println!("Repair verification: {}", plan.verification_command);
+    }
+
+    if !report.blockers.is_empty() {
+        println!();
+        println!("Blockers:");
+        for blocker in &report.blockers {
+            println!("  - {blocker}");
+        }
+    }
+
+    if !report.recommendations.is_empty() {
+        println!();
+        println!("Recommendations:");
+        for recommendation in &report.recommendations {
+            println!("  - {recommendation}");
+        }
+    }
+
+    if !report.review.findings.is_empty() {
+        println!();
+        println!("Top findings:");
+        for finding in report.review.findings.iter().take(8) {
+            let line = finding
+                .line
+                .map(|line| format!(":{line}"))
+                .unwrap_or_default();
+            println!(
+                "  - {:?}/{:?} {}{}: {}",
+                finding.severity, finding.category, finding.file, line, finding.title
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn format_cli_list(items: &[String]) -> String {
+    if items.is_empty() {
+        "none".to_string()
+    } else {
+        items.join(", ")
+    }
 }
 
 async fn run_non_interactive(
